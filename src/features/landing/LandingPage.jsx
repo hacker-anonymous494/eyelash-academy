@@ -995,10 +995,119 @@ function Footer() {
     Company: ["About Us", "Blog", "Press Kit", "Careers", "Partnerships"],
     Support: ["Help Center", "Contact Us", "Privacy Policy", "Terms of Service", "Refund Policy"],
   };
+
   return (
-    <footer style={{ background: "linear-gradient(180deg, #0e0208 0%, #0a0106 100%)", padding: "80px 24px 40px", overflow: "hidden", position: "relative" }}>
-      {/* (footer content identical to original) */}
-      <p style={{ textAlign: "center", color: "rgba(255,120,150,0.35)" }}>© 2025 Lumière Beauty Academy. All rights reserved.</p>
+    <footer style={{
+      background: "linear-gradient(180deg, #0e0208 0%, #0a0106 100%)",
+      padding: "80px 24px 40px", overflow: "hidden", position: "relative",
+    }}>
+      {/* Top glow */}
+      <div style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: 600, height: 2, background: "linear-gradient(90deg, transparent, rgba(200,64,112,0.6), transparent)" }}/>
+
+      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 48, marginBottom: 64 }} className="footer-grid">
+          {/* Brand */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg,#c84070,#f07090)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.8)" }}/>
+              </div>
+              <div>
+                <div style={{ fontFamily: FONTS.display, fontSize: 20, fontWeight: 600, color: "rgba(255,240,245,0.95)" }}>Lumière</div>
+                <div style={{ fontFamily: FONTS.body, fontSize: 10, color: "#f87096", letterSpacing: "0.12em", textTransform: "uppercase" }}>Beauty Academy</div>
+              </div>
+            </div>
+            <p style={{ fontFamily: FONTS.body, fontSize: 14, color: "rgba(255,160,180,0.55)", lineHeight: 1.7, maxWidth: 300, fontWeight: 300, marginBottom: 24 }}>
+              The world's most comprehensive eyelash extension training platform. Empowering beauty professionals since 2018.
+            </p>
+
+            {/* Social */}
+            <div style={{ display: "flex", gap: 10 }}>
+              {["Instagram", "YouTube", "TikTok", "LinkedIn"].map(s => (
+                <div key={s} style={{
+                  width: 36, height: 36, borderRadius: 10,
+                  background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,180,200,0.12)",
+                  display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                  transition: "all 0.2s",
+                  fontFamily: FONTS.body, fontSize: 9, color: "rgba(255,180,200,0.5)", letterSpacing: "0.04em",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "rgba(200,64,112,0.15)"; e.currentTarget.style.borderColor = "rgba(200,64,112,0.3)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.borderColor = "rgba(255,180,200,0.12)"; }}
+                >
+                  {s[0]}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Link columns */}
+          {Object.entries(links).map(([cat, items]) => (
+            <div key={cat}>
+              <h4 style={{ fontFamily: FONTS.body, fontSize: 11, fontWeight: 700, color: "rgba(255,200,215,0.5)", letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 20 }}>{cat}</h4>
+              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+                {items.map(item => (
+                  <li key={item}>
+                    <a href="#" style={{
+                      fontFamily: FONTS.body, fontSize: 14, color: "rgba(255,160,180,0.5)", textDecoration: "none",
+                      transition: "color 0.2s",
+                    }}
+                      onMouseEnter={e => e.target.style.color = "rgba(255,200,215,0.9)"}
+                      onMouseLeave={e => e.target.style.color = "rgba(255,160,180,0.5)"}
+                    >{item}</a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Newsletter */}
+        <div style={{
+          background: "rgba(200,64,112,0.08)", border: "1px solid rgba(200,64,112,0.18)",
+          borderRadius: 20, padding: "32px 40px", marginBottom: 48,
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 32, flexWrap: "wrap",
+        }}>
+          <div>
+            <h4 style={{ fontFamily: FONTS.display, fontSize: 22, fontWeight: 500, color: "rgba(255,240,245,0.9)", marginBottom: 6 }}>
+              Get free lash tips weekly
+            </h4>
+            <p style={{ fontFamily: FONTS.body, fontSize: 13, color: "rgba(255,160,180,0.6)" }}>Join 18,000+ artists who read our newsletter</p>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <input
+              type="email" placeholder="your@email.com"
+              style={{
+                fontFamily: FONTS.body, fontSize: 14,
+                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,180,200,0.2)",
+                borderRadius: 100, padding: "12px 20px", color: "rgba(255,240,245,0.85)",
+                outline: "none", minWidth: 220,
+              }}
+            />
+            <button className="btn-primary" style={{ fontSize: 14 }}>Subscribe</button>
+          </div>
+        </div>
+
+        {/* Bottom */}
+        <div style={{ borderTop: "1px solid rgba(255,180,200,0.08)", paddingTop: 28, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+          <p style={{ fontFamily: FONTS.body, fontSize: 13, color: "rgba(255,120,150,0.35)" }}>
+            © 2025 Lumière Beauty Academy. All rights reserved.
+          </p>
+          <div style={{ display: "flex", gap: 24 }}>
+            {["Privacy", "Terms", "Cookies"].map(l => (
+              <a key={l} href="#" style={{ fontFamily: FONTS.body, fontSize: 13, color: "rgba(255,120,150,0.35)", textDecoration: "none" }}>{l}</a>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        @media (max-width: 768px) {
+          .footer-grid { grid-template-columns: 1fr 1fr !important; }
+        }
+        @media (max-width: 480px) {
+          .footer-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
     </footer>
   );
 }
