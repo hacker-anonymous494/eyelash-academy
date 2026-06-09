@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useSignOut } from '@/features/auth/hooks/useSignOut';
@@ -7,197 +7,268 @@ import ChatBubble from '@/features/chat/ChatBubble';
 import CallToast from '@/features/calls/CallToast';
 import { useCallNotifications } from '@/features/calls/useCallNotifications';
 
-const navItems = [
-  { to: '/dashboard', label: 'Overview', icon: '📊', exact: true },
-  { to: '/dashboard/courses', label: 'My Courses', icon: '📚' },
-  { to: '/dashboard/certificates', label: 'Certificates', icon: '📜' },
-  { to: '/dashboard/calls', label: 'My Calls', icon: '📞' },
-  { to: '/dashboard/settings', label: 'Settings', icon: '⚙️' },
-];
+// ─── Design tokens (same dark theme as LearnPage) ────────────────────────
+const S = {
+  sidebarBg: '#0f0a10',
+  sidebarBorder: 'rgba(232,112,144,0.18)',
+  sidebarText: 'rgba(255,240,245,0.85)',
+  sidebarMuted: 'rgba(255,180,210,0.45)',
+  sidebarHover: 'rgba(255,255,255,0.05)',
+  sidebarActive: 'rgba(232,112,144,0.14)',
+  sidebarActiveRail: '#e87090',
+  canvasBg: '#faf8f7',
+};
 
+// ─── Icons (compact SVGs) ────────────────────────────────────────────────
+const Icons = {
+  dashboard: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  courses: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+  certificates: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>,
+  calls: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+  settings: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  logout: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+  hamburger: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>,
+};
+
+// ─── NavItem ──────────────────────────────────────────────────────────────
+function NavItem({ icon, label, to, active, onClick }) {
+  return (
+    <Link to={to} style={{ textDecoration: 'none' }} onClick={onClick}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '8px 12px',
+          borderRadius: 6,
+          marginBottom: 2,
+          cursor: 'pointer',
+          background: active ? S.sidebarActive : 'transparent',
+          color: active ? 'rgba(255,240,245,0.95)' : S.sidebarText,
+          transition: 'background 0.15s',
+          position: 'relative',
+        }}
+        onMouseEnter={e => { if (!active) e.currentTarget.style.background = S.sidebarHover; }}
+        onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+      >
+        {active && (
+          <span style={{
+            position: 'absolute', left: 0, top: '25%', bottom: '25%',
+            width: 3, borderRadius: 2, background: S.sidebarActiveRail,
+          }} />
+        )}
+        <span style={{ opacity: active ? 1 : 0.7 }}>{icon}</span>
+        <span style={{ fontFamily: "'DM Sans', system-ui, sans-serif", fontSize: 13, fontWeight: active ? 500 : 400 }}>
+          {label}
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+// ─── StudentLayout ────────────────────────────────────────────────────────
 export default function StudentLayout() {
   const { user, profile } = useAuth();
   const { signOut } = useSignOut();
   const location = useLocation();
-  const navigate = useNavigate();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
 
-  // Activate call notifications
   useCallNotifications();
 
-  // Close sidebar on route change (mobile)
   useEffect(() => {
-    setSidebarOpen(false);
-  }, [location.pathname]);
-
-  // Close user menu on outside click
-  useEffect(() => {
-    const handler = () => setUserMenuOpen(false);
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
+    const handleResize = () => {
+      setSidebarOpen(window.innerWidth >= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  useEffect(() => {
+    if (window.innerWidth < 768) setSidebarOpen(false);
+  }, [location.pathname]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#fff6f9] via-[#fdf2ee] to-[#fff0f4] flex">
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Sidebar */}
-      <motion.aside
-        initial={{ x: -280 }}
-        animate={{ x: sidebarOpen ? 0 : -280 }}
-        transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-        className="fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white/90 backdrop-blur-xl border-r border-brand-rose-200/40 flex flex-col shadow-2xl lg:shadow-none lg:translate-x-0"
-      >
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-2 px-6 py-5 border-b border-brand-rose-200/40">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-rose-600 to-brand-rose-400 flex items-center justify-center shadow shadow-brand-rose-300">
-            <div className="w-3 h-3 rounded-full border-2 border-white/80" />
-          </div>
-          <div>
-            <span className="font-display text-base font-semibold text-brand-rose-800">Lumière</span>
-            <span className="block text-[9px] text-brand-rose-500 tracking-[0.1em] uppercase">Academy</span>
-          </div>
-        </Link>
-
-        {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const isActive = item.exact
-              ? location.pathname === item.to
-              : location.pathname.startsWith(item.to);
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                  isActive
-                    ? 'bg-brand-rose-100 text-brand-rose-800 shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-brand-rose-700'
-                }`}
-              >
-                <span className="text-lg">{item.icon}</span>
-                <span>{item.label}</span>
-                {isActive && (
-                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-rose-500" />
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* User footer */}
-        <div className="p-4 border-t border-brand-rose-200/40">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-rose-400 to-brand-rose-600 text-white flex items-center justify-center text-sm font-semibold">
-              {profile?.full_name?.charAt(0) || 'U'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-800 truncate">
-                {profile?.full_name || 'Student'}
-              </p>
-              <p className="text-xs text-gray-400 truncate">{user?.email}</p>
-            </div>
-          </div>
-          <button
-            onClick={signOut}
-            className="w-full text-xs text-gray-500 hover:text-red-500 transition-colors text-left"
-          >
-            Sign Out
-          </button>
-        </div>
-      </motion.aside>
-
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-screen">
-        {/* Header */}
-        <header className="bg-white/80 backdrop-blur-xl border-b border-brand-rose-200/40 h-14 flex items-center justify-between px-4 sticky top-0 z-30">
-          <div className="flex items-center gap-3">
-            {/* Mobile menu toggle */}
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="lg:hidden text-gray-500 hover:text-brand-rose-600 transition-colors"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 12h18M3 6h18M3 18h18" />
-              </svg>
-            </button>
-
-            {/* Breadcrumb / page title */}
-            <div>
-              <p className="text-xs text-gray-400">Welcome back</p>
-              <p className="text-sm font-semibold text-gray-800">
-                {profile?.full_name || 'Student'}
-              </p>
-            </div>
-          </div>
-
-          {/* Right actions */}
-          <div className="flex items-center gap-2">
-            {/* Notifications (placeholder) */}
-            <button className="w-9 h-9 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center text-gray-400 hover:text-brand-rose-600 hover:border-brand-rose-300 transition-all relative">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-brand-rose-500 border-2 border-white" />
-            </button>
-
-            {/* User menu */}
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setUserMenuOpen(!userMenuOpen);
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: S.canvasBg }}>
+      {/* Sidebar – fixed on mobile, static on desktop */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <>
+            {/* Mobile backdrop */}
+            {window.innerWidth < 768 && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                style={{
+                  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)',
+                  zIndex: 40,
                 }}
-                className="w-9 h-9 rounded-full bg-gradient-to-br from-brand-rose-400 to-brand-rose-600 text-white flex items-center justify-center text-sm font-semibold"
-              >
-                {profile?.full_name?.charAt(0) || 'U'}
-              </button>
+                onClick={() => setSidebarOpen(false)}
+              />
+            )}
 
-              <AnimatePresence>
-                {userMenuOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                    className="absolute right-0 mt-2 w-48 bg-white/90 backdrop-blur-xl border border-brand-rose-200/40 rounded-xl shadow-xl py-2 z-50"
-                    onClick={(e) => e.stopPropagation()}
+            <motion.aside
+              initial={{ x: -280 }}
+              animate={{ x: 0 }}
+              exit={{ x: -280 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              style={{
+                position: window.innerWidth < 768 ? 'fixed' : 'relative',
+                zIndex: 50,
+                width: 250,
+                height: '100vh',
+                background: S.sidebarBg,
+                borderRight: `1px solid ${S.sidebarBorder}`,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ width: 250, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                {/* Logo */}
+                <Link to="/" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '16px 14px 12px',
+                  borderBottom: `1px solid ${S.sidebarBorder}`,
+                  textDecoration: 'none',
+                  flexShrink: 0,
+                }}>
+                  <div style={{
+                    width: 22, height: 22, borderRadius: 6,
+                    background: 'linear-gradient(135deg,#c84070,#f07090)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <div style={{ width: 7, height: 7, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.8)' }} />
+                  </div>
+                  <span style={{
+                    fontFamily: "'Cormorant Garamond', 'Playfair Display', Georgia, serif",
+                    fontSize: 14,
+                    color: '#f0a0b8',
+                    fontWeight: 600,
+                  }}>
+                    Lumière
+                  </span>
+                </Link>
+
+                {/* User info (compact) */}
+                <div style={{ padding: '10px 14px 6px', flexShrink: 0 }}>
+                  <p style={{
+                    fontFamily: "'DM Sans', system-ui, sans-serif",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: S.sidebarText,
+                    margin: 0,
+                  }}>
+                    {profile?.full_name || 'Student'}
+                  </p>
+                  <p style={{
+                    fontFamily: "'DM Sans', system-ui, sans-serif",
+                    fontSize: 10,
+                    color: S.sidebarMuted,
+                    margin: 0,
+                  }}>
+                    {user?.email}
+                  </p>
+                </div>
+
+                {/* Navigation */}
+                <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
+                  <NavItem
+                    icon={Icons.dashboard}
+                    label="Overview"
+                    to="/dashboard"
+                    active={location.pathname === '/dashboard'}
+                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
+                  />
+                  <NavItem
+                    icon={Icons.courses}
+                    label="My Courses"
+                    to="/dashboard/courses"
+                    active={location.pathname.startsWith('/dashboard/courses')}
+                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
+                  />
+                  <NavItem
+                    icon={Icons.certificates}
+                    label="Certificates"
+                    to="/dashboard/certificates"
+                    active={location.pathname.startsWith('/dashboard/certificates')}
+                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
+                  />
+                  <NavItem
+                    icon={Icons.calls}
+                    label="My Calls"
+                    to="/dashboard/calls"
+                    active={location.pathname.startsWith('/dashboard/calls')}
+                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
+                  />
+                  <NavItem
+                    icon={Icons.settings}
+                    label="Settings"
+                    to="/dashboard/settings"
+                    active={location.pathname.startsWith('/dashboard/settings')}
+                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
+                  />
+                </nav>
+
+                {/* Logout */}
+                <div style={{ padding: '8px 14px', borderTop: `1px solid ${S.sidebarBorder}`, flexShrink: 0 }}>
+                  <button
+                    onClick={signOut}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      background: 'transparent',
+                      border: 'none',
+                      color: S.sidebarMuted,
+                      fontFamily: "'DM Sans', system-ui, sans-serif",
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      width: '100%',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = S.sidebarHover}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    <div className="px-4 py-2 border-b border-brand-rose-100/50">
-                      <p className="text-sm font-semibold text-gray-800">{profile?.full_name}</p>
-                      <p className="text-xs text-gray-400">{user?.email}</p>
-                    </div>
-                    <Link
-                      to="/dashboard/settings"
-                      className="block px-4 py-2 text-sm text-gray-600 hover:bg-brand-rose-50 transition"
-                      onClick={() => setUserMenuOpen(false)}
-                    >
-                      ⚙️ Settings
-                    </Link>
-                    <button
-                      onClick={() => { signOut(); setUserMenuOpen(false); }}
-                      className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition"
-                    >
-                      🚪 Sign Out
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
-        </header>
+                    {Icons.logout} Sign Out
+                  </button>
+                </div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
-        {/* Page content */}
-        <main className="flex-1 p-4 md:p-6 relative z-10">
-          <Outlet />
-        </main>
+      {/* Main content – absolutely no extra padding or header */}
+      <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+        {/* Mobile hamburger (only when sidebar closed) */}
+        {!sidebarOpen && (
+          <button
+            onClick={() => setSidebarOpen(true)}
+            style={{
+              position: 'fixed',
+              top: 12,
+              left: 12,
+              zIndex: 20,
+              background: 'rgba(255,255,255,0.85)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid rgba(220,160,180,0.2)',
+              borderRadius: 8,
+              padding: 6,
+              cursor: 'pointer',
+              color: '#c84070',
+              lineHeight: 0,
+            }}
+          >
+            {Icons.hamburger}
+          </button>
+        )}
+        <Outlet />
       </div>
 
       {/* Global floating widgets */}
