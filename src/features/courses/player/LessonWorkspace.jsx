@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/config/supabase';
 import { getSignedVideoUrl } from '@/lib/supabaseStorage';
 import GlassCard from '@/shared/components/GlassCard';
@@ -6,9 +6,15 @@ import PrimaryButton from '@/shared/components/PrimaryButton';
 import QuizPanel from './QuizPanel';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken }) {
+export default function LessonWorkspace({
+  lesson,
+  courseId,
+  userId,
+  onQuizSubmitted,  // ✅ prop name fixed to match LearnPage
+}) {
   const [videoUrl, setVideoUrl] = useState(null);
   const [videoLoading, setVideoLoading] = useState(true);
+  const [videoReady, setVideoReady] = useState(false);  // ✅ new state for video element existence
   const [videoWatched, setVideoWatched] = useState(false);
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizTaken, setQuizTaken] = useState(false);
@@ -16,7 +22,44 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
   const [showWarning, setShowWarning] = useState(false);
   const [activeTab, setActiveTab] = useState('summary');
   const videoRef = useRef(null);
-  const progressInterval = useRef(null);
+  const intervalRef = useRef(null);
+
+  // Helper: save video progress to Supabase
+// Inside LessonWorkspace – the saveProgress callback
+const saveProgress = useCallback(async () => {
+  if (!videoRef.current || videoRef.current.paused || !userId || !lesson.id) return;
+
+  const currentTime = Math.floor(videoRef.current.currentTime);
+  const videoDuration = videoRef.current.duration; // used only locally
+  const isCompleted = videoDuration > 0 && currentTime / videoDuration >= 0.95;
+
+  try {
+    await supabase
+      .from('lesson_progress')
+      .upsert(
+        {
+          student_id: userId,
+          lesson_id: lesson.id,
+          last_watched_seconds: currentTime,
+          // ✅ NO duration here – it doesn't exist in the table
+        },
+        { onConflict: 'student_id,lesson_id' }
+      );
+
+    if (isCompleted && !videoWatched) {
+      setVideoWatched(true);
+    }
+  } catch (error) {
+    console.error('Failed to save video progress:', error);
+  }
+}, [userId, lesson.id, videoWatched]);
+  // Start / stop the save interval based on videoReady
+  useEffect(() => {
+    if (!videoReady) return;  // don't start until video element exists
+
+    intervalRef.current = setInterval(saveProgress, 5000);
+    return () => clearInterval(intervalRef.current);
+  }, [videoReady, saveProgress]);
 
   // Fetch signed video URL
   useEffect(() => {
@@ -31,7 +74,7 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
     loadVideo();
   }, [lesson]);
 
-  // Fetch existing progress (quiz attempts, video watched)
+  // Fetch existing progress (quiz, video completion)
   useEffect(() => {
     async function fetchProgress() {
       const { data } = await supabase
@@ -42,45 +85,19 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
         .maybeSingle();
       if (data) {
         setProgress(data);
-        setVideoWatched(data.last_watched_seconds > 0 && data.last_watched_seconds / (data.duration || 1) > 0.9);
+        setVideoWatched(
+          data.last_watched_seconds > 0 &&
+          data.last_watched_seconds / (data.duration || 1) > 0.9
+        );
         setQuizTaken(data.quiz_attempts && data.quiz_attempts.length > 0);
       }
     }
     if (userId && lesson) fetchProgress();
   }, [userId, lesson]);
 
-  // Update video progress every 5 seconds
-  useEffect(() => {
-    if (!videoRef.current) return;
-
-    const updateProgress = async () => {
-      if (videoRef.current && !videoRef.current.paused) {
-        const currentTime = Math.floor(videoRef.current.currentTime);
-        const duration = videoRef.current.duration;
-        const isCompleted = duration > 0 && currentTime / duration >= 0.95;
-
-        await supabase
-          .from('lesson_progress')
-          .upsert({
-            student_id: userId,
-            lesson_id: lesson.id,
-            last_watched_seconds: currentTime,
-            duration: Math.floor(duration),
-          }, { onConflict: 'student_id,lesson_id' });
-
-        if (isCompleted && !videoWatched) {
-          setVideoWatched(true);
-        }
-      }
-    };
-
-    progressInterval.current = setInterval(updateProgress, 5000);
-    return () => clearInterval(progressInterval.current);
-  }, [lesson.id, userId, videoWatched]);
-
   const handleTakeQuiz = () => {
     if (quizTaken) {
-      setShowQuiz(true);
+      setShowQuiz(true);  // view previous quiz (read only)
     } else {
       setShowWarning(true);
     }
@@ -94,7 +111,9 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
   const handleQuizPassed = () => {
     setQuizTaken(true);
     setShowQuiz(false);
-    if (onQuizTaken) onQuizTaken();
+    if (onQuizSubmitted) {
+      onQuizSubmitted(); // ✅ triggers refresh in LearnPage
+    }
   };
 
   const tabs = [
@@ -108,7 +127,6 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
         {/* Main content area */}
         <div className="lg:col-span-2 flex flex-col space-y-4 overflow-y-auto">
-          {/* Video Player */}
           <GlassCard className="p-0 overflow-hidden rounded-xl">
             <div className="aspect-video bg-black relative">
               {videoLoading ? (
@@ -117,7 +135,10 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
                 </div>
               ) : videoUrl ? (
                 <video
-                  ref={videoRef}
+                  ref={(el) => {
+                    videoRef.current = el;
+                    setVideoReady(!!el);   // ✅ signal that the video element is mounted
+                  }}
                   src={videoUrl}
                   controls
                   className="w-full h-full"
@@ -131,7 +152,6 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
             </div>
           </GlassCard>
 
-          {/* Tabs for Summary, Tasks, Links */}
           <GlassCard className="flex-1 p-6">
             <div className="flex border-b border-brand-rose-200/40 mb-4">
               {tabs.map((tab) => (
@@ -179,9 +199,9 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
                   {lesson.helpful_links && lesson.helpful_links.length > 0 ? (
                     <ul className="space-y-2">
                       {lesson.helpful_links.map((link, idx) => {
-                        // SAFE: handle both string URLs and objects {url, label}
                         const url = typeof link === 'string' ? link : link?.url;
-                        const label = typeof link === 'string' ? link : (link?.label || link?.url || 'Resource');
+                        const label =
+                          typeof link === 'string' ? link : link?.label || link?.url || 'Resource';
                         return (
                           <li key={idx}>
                             <a
@@ -249,7 +269,7 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
         </div>
       </div>
 
-      {/* Warning Modal */}
+      {/* Warning Modal (unchanged) */}
       <AnimatePresence>
         {showWarning && (
           <motion.div
@@ -267,17 +287,16 @@ export default function LessonWorkspace({ lesson, courseId, userId, onQuizTaken 
               onClick={(e) => e.stopPropagation()}
             >
               <div className="text-4xl mb-4 text-center">⚠️</div>
-              <h3 className="text-xl font-display font-semibold mb-2 text-center">Important: Read Before Taking the Quiz</h3>
+              <h3 className="text-xl font-display font-semibold mb-2 text-center">
+                Important: Read Before Taking the Quiz
+              </h3>
               <p className="text-gray-600 text-sm mb-4">
-                This quiz is designed to test your understanding of the lesson. You can only take it <strong>once</strong>.
-                Your score will be logged and contributes to your overall grade. Make sure you have watched the video
-                and reviewed the summary before proceeding.
+                This quiz is designed to test your understanding of the lesson. You can only take it{' '}
+                <strong>once</strong>. Your score will be logged and contributes to your overall grade.
+                Make sure you have watched the video and reviewed the summary before proceeding.
               </p>
               <div className="flex gap-3">
-                <button
-                  onClick={() => setShowWarning(false)}
-                  className="btn-ghost flex-1"
-                >
+                <button onClick={() => setShowWarning(false)} className="btn-ghost flex-1">
                   Cancel
                 </button>
                 <PrimaryButton onClick={confirmTakeQuiz} className="flex-1">

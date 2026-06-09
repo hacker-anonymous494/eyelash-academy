@@ -13,39 +13,58 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
   const [loading, setLoading] = useState(true);
   const [attempts, setAttempts] = useState(0);
   const [lastAttemptDate, setLastAttemptDate] = useState(null);
+  const [fetchError, setFetchError] = useState(null);
 
-  // Fetch quiz and questions
   useEffect(() => {
     async function fetchQuiz() {
-      const { data: quizData } = await supabase
-        .from('quizzes')
-        .select('*, quiz_questions(*)')
-        .eq('lesson_id', lessonId)
-        .maybeSingle();
-
-      if (quizData) {
-        setQuiz(quizData);
-        setQuestions(quizData.quiz_questions || []);
-
-        // Check existing progress for attempts
-        const { data: progress } = await supabase
-          .from('lesson_progress')
-          .select('quiz_attempts, passed_quiz')
-          .eq('student_id', userId)
+      try {
+        const { data: quizData, error: quizError } = await supabase
+          .from('quizzes')
+          .select('*, quiz_questions(*)')
           .eq('lesson_id', lessonId)
           .maybeSingle();
 
-        if (progress) {
-          const attempts = progress.quiz_attempts || [];
-          setAttempts(attempts.length);
-          setLastAttemptDate(attempts.length > 0 ? attempts[attempts.length - 1].date : null);
-          if (progress.passed_quiz) {
-            setPassed(true);
-            setSubmitted(true);
+        if (quizError) throw quizError;
+
+        if (quizData) {
+          setQuiz(quizData);
+          const sortedQuestions = (quizData.quiz_questions || []).sort(
+            (a, b) => (a.position ?? 0) - (b.position ?? 0)
+          );
+          setQuestions(sortedQuestions);
+
+          // Existing progress
+          const { data: progress } = await supabase
+            .from('lesson_progress')
+            .select('quiz_attempts, passed_quiz')
+            .eq('student_id', userId)
+            .eq('lesson_id', lessonId)
+            .maybeSingle();
+
+          if (progress) {
+            const attempts = progress.quiz_attempts || [];
+            setAttempts(attempts.length);
+            if (attempts.length > 0) {
+              setLastAttemptDate(attempts[attempts.length - 1].date);
+            }
+            if (progress.passed_quiz) {
+              setPassed(true);
+              setSubmitted(true);
+              // If already passed, we can also retrieve the last score
+              const lastAttempt = attempts[attempts.length - 1];
+              if (lastAttempt) setScore(lastAttempt.score);
+            }
           }
+        } else {
+          // No quiz for this lesson
+          setQuiz(null);
         }
+      } catch (err) {
+        console.error('Quiz fetch error:', err);
+        setFetchError(err.message);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     fetchQuiz();
   }, [lessonId, userId]);
@@ -57,7 +76,6 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
   const handleSubmit = async () => {
     if (submitted) return;
 
-    // Calculate score
     let correct = 0;
     questions.forEach((q) => {
       if (userAnswers[q.id] === q.correct_option_index) correct++;
@@ -65,13 +83,13 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
     const percentage = Math.round((correct / questions.length) * 100);
     const hasPassed = percentage >= (quiz.pass_percentage || 70);
 
-    // Update lesson_progress
     const newAttempt = {
       date: new Date().toISOString(),
       score: percentage,
       answers: userAnswers,
     };
 
+    // Fetch existing attempts
     const { data: currentProgress } = await supabase
       .from('lesson_progress')
       .select('quiz_attempts')
@@ -84,14 +102,17 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
 
     const { error } = await supabase
       .from('lesson_progress')
-      .upsert({
-        student_id: userId,
-        lesson_id: lessonId,
-        quiz_attempts: updatedAttempts,
-        passed_quiz: hasPassed,
-        completed: hasPassed,
-        completed_at: hasPassed ? new Date().toISOString() : null,
-      }, { onConflict: 'student_id,lesson_id' });
+      .upsert(
+        {
+          student_id: userId,
+          lesson_id: lessonId,
+          quiz_attempts: updatedAttempts,
+          passed_quiz: hasPassed,
+          completed: hasPassed,
+          completed_at: hasPassed ? new Date().toISOString() : null,
+        },
+        { onConflict: 'student_id,lesson_id' }
+      );
 
     if (!error) {
       setScore(percentage);
@@ -99,17 +120,34 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
       setSubmitted(true);
       setAttempts(updatedAttempts.length);
       setLastAttemptDate(newAttempt.date);
-
-      // ✅ Notify parent that quiz was taken (even if failed)
-      if (onQuizPassed) {
-        onQuizPassed();
-      }
+      if (onQuizPassed) onQuizPassed(); // notify parent regardless of pass/fail
     }
   };
 
   if (loading) return <div className="text-center py-4">Loading quiz...</div>;
-  if (!quiz) return null; // No quiz for this lesson
 
+  if (fetchError) {
+    return (
+      <GlassCard className="p-4 mt-4 bg-red-50/80 border-red-200">
+        <p className="text-red-700 font-semibold">Failed to load quiz</p>
+        <p className="text-sm text-red-600">{fetchError}</p>
+      </GlassCard>
+    );
+  }
+
+  // ✅ Fallback when no quiz exists
+  if (!quiz) {
+    return (
+      <GlassCard className="p-4 mt-4 bg-yellow-50/80 border-yellow-200">
+        <p className="text-yellow-700 font-semibold">No quiz available</p>
+        <p className="text-sm text-yellow-600">
+          This lesson does not have a quiz yet. Please check back later.
+        </p>
+      </GlassCard>
+    );
+  }
+
+  // Already passed
   if (passed) {
     return (
       <GlassCard className="p-4 mt-4 bg-green-50/80 border-green-200">

@@ -9,7 +9,7 @@ import CourseCompletionBar from './CourseCompletionBar';
 import ChatBubble from '@/features/chat/ChatBubble';
 import CallNotification from '@/features/calls/CallNotification';
 
-// ─── Icon helpers ─────────────────────────────────────────────────────────────
+// ─── Icon helpers (unchanged) ──────────────────────────────────────────────
 function CheckIcon({ size = 12 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -53,9 +53,8 @@ function MenuIcon() {
   );
 }
 
-// ─── Inline styles (no Tailwind dependency for custom tokens) ─────────────────
+// ─── Inline styles ─────────────────────────────────────────────────────────
 const S = {
-  // Sidebar dark skin
   sidebarBg: '#0f0a10',
   sidebarBorder: 'rgba(232,112,144,0.18)',
   sidebarText: 'rgba(255,240,245,0.85)',
@@ -64,18 +63,15 @@ const S = {
   sidebarActive: 'rgba(232,112,144,0.14)',
   sidebarActiveRail: '#e87090',
 
-  // Main canvas
   canvasBg: '#faf8f7',
   cardBg: 'rgba(255,255,255,0.92)',
   cardBorder: 'rgba(220,160,180,0.2)',
 
-  // Accent
   rose: '#c84070',
   roseLight: '#f0a0b8',
   roseDark: '#8a2040',
   gold: '#d4a030',
 
-  // Typography
   fontDisplay: "'Cormorant Garamond', 'Playfair Display', Georgia, serif",
   fontBody: "'DM Sans', system-ui, sans-serif",
 
@@ -83,20 +79,12 @@ const S = {
   radiusSm: 10,
 };
 
-// ─── Lesson status helpers ────────────────────────────────────────────────────
-
-/**
- * FIX #1: Consistent "completed" definition = passed_quiz === true.
- * A lesson is locked if the PREVIOUS lesson has not been attempted at all
- * (quiz_attempts empty OR missing). Passing is NOT required to unlock —
- * only attempting the quiz is required, so students can't get permanently stuck.
- */
+// ─── Lesson status helpers ─────────────────────────────────────────────────
 function isLessonLocked(lesson, flatLessons, progressMap) {
   const index = flatLessons.findIndex(l => l.id === lesson.id);
-  if (index <= 0) return false; // first lesson always unlocked
+  if (index <= 0) return false;
   const prev = flatLessons[index - 1];
   const prevProgress = progressMap[prev.id];
-  // Unlock next lesson once previous quiz has been attempted (any attempt)
   return !prevProgress?.quiz_attempts?.length;
 }
 
@@ -109,7 +97,7 @@ function lessonStatus(lesson, progressMap) {
   return 'untouched';
 }
 
-// ─── Sidebar lesson row ───────────────────────────────────────────────────────
+// ─── Sidebar lesson row ────────────────────────────────────────────────────
 function LessonRow({ lesson, isActive, locked, status, onClick }) {
   return (
     <motion.button
@@ -134,15 +122,12 @@ function LessonRow({ lesson, isActive, locked, status, onClick }) {
       onMouseEnter={e => { if (!isActive && !locked) e.currentTarget.style.background = S.sidebarHover; }}
       onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
     >
-      {/* Active rail */}
       {isActive && (
         <span style={{
           position: 'absolute', left: 0, top: '20%', bottom: '20%',
           width: 3, borderRadius: 2, background: S.sidebarActiveRail,
         }} />
       )}
-
-      {/* Status dot */}
       <span style={{
         width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -169,7 +154,6 @@ function LessonRow({ lesson, isActive, locked, status, onClick }) {
           : <PlayIcon size={10} />
         }
       </span>
-
       <span style={{
         flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         fontFamily: S.fontBody, fontSize: 13, fontWeight: isActive ? 500 : 400,
@@ -178,8 +162,6 @@ function LessonRow({ lesson, isActive, locked, status, onClick }) {
       }}>
         {lesson.title}
       </span>
-
-      {/* Duration badge */}
       {lesson.duration_seconds > 0 && (
         <span style={{
           fontFamily: S.fontBody, fontSize: 10, color: S.sidebarMuted, flexShrink: 0,
@@ -191,11 +173,10 @@ function LessonRow({ lesson, isActive, locked, status, onClick }) {
   );
 }
 
-// ─── Sidebar ──────────────────────────────────────────────────────────────────
+// ─── Sidebar ────────────────────────────────────────────────────────────────
 function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson, progressMap, userId }) {
   const flatLessons = modules.flatMap(m => m.lessons || []);
   const totalLessons = flatLessons.length;
-  // FIX #2: sidebar completion uses passed_quiz consistently
   const passedCount = flatLessons.filter(l => progressMap[l.id]?.passed_quiz).length;
   const pct = totalLessons > 0 ? Math.round((passedCount / totalLessons) * 100) : 0;
 
@@ -213,7 +194,6 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
       }}
     >
       <div style={{ width: 300, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-        {/* Header */}
         <div style={{
           padding: '20px 16px 16px',
           borderBottom: `1px solid ${S.sidebarBorder}`,
@@ -222,7 +202,6 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
         }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 14 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              {/* Lumière logo mark */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
                 <div style={{
                   width: 22, height: 22, borderRadius: 6,
@@ -255,8 +234,6 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
               <ChevronLeftIcon />
             </button>
           </div>
-
-          {/* Inline progress bar */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
               <span style={{ fontFamily: S.fontBody, fontSize: 11, color: S.sidebarMuted, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Your progress</span>
@@ -279,20 +256,15 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
             </div>
           </div>
         </div>
-
-        {/* Course completion bar (certificate claim) */}
         <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
           <CourseCompletionBar courseId={course.id} userId={userId} passedCount={passedCount} totalLessons={totalLessons} />
         </div>
-
-        {/* Lesson list */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 24px' }}>
           {modules.map((mod, mi) => {
             const modLessons = mod.lessons || [];
             const modPassed = modLessons.filter(l => progressMap[l.id]?.passed_quiz).length;
             return (
               <div key={mod.id} style={{ marginBottom: 4 }}>
-                {/* Module header */}
                 <div style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '10px 12px 6px',
@@ -310,7 +282,6 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
                     {modPassed}/{modLessons.length}
                   </span>
                 </div>
-
                 {modLessons.map((lesson) => {
                   const locked = isLessonLocked(lesson, flatLessons, progressMap);
                   const status = lessonStatus(lesson, progressMap);
@@ -325,8 +296,6 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
                     />
                   );
                 })}
-
-                {/* Module divider */}
                 {mi < modules.length - 1 && (
                   <div style={{ height: 1, background: 'rgba(255,255,255,0.05)', margin: '8px 12px' }} />
                 )}
@@ -339,7 +308,7 @@ function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson
   );
 }
 
-// ─── Topbar ───────────────────────────────────────────────────────────────────
+// ─── Topbar ─────────────────────────────────────────────────────────────────
 function Topbar({ sidebarOpen, onOpenSidebar, course, activeLesson, flatLessons, progressMap, setActiveLesson }) {
   const currentIndex = flatLessons.findIndex(l => l.id === activeLesson?.id);
   const prevLesson = currentIndex > 0 ? flatLessons[currentIndex - 1] : null;
@@ -372,8 +341,6 @@ function Topbar({ sidebarOpen, onOpenSidebar, course, activeLesson, flatLessons,
           <MenuIcon />
         </button>
       )}
-
-      {/* Breadcrumb */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontFamily: S.fontBody, fontSize: 11, color: '#9a6070',
@@ -389,8 +356,6 @@ function Topbar({ sidebarOpen, onOpenSidebar, course, activeLesson, flatLessons,
           {activeLesson?.title || 'Select a lesson'}
         </h1>
       </div>
-
-      {/* Prev / Next navigation */}
       <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
         <button
           onClick={() => prevLesson && setActiveLesson(prevLesson)}
@@ -423,8 +388,6 @@ function Topbar({ sidebarOpen, onOpenSidebar, course, activeLesson, flatLessons,
           Next <ChevronRightIcon />
         </button>
       </div>
-
-      {/* Dashboard link */}
       <Link
         to="/dashboard"
         style={{
@@ -442,7 +405,7 @@ function Topbar({ sidebarOpen, onOpenSidebar, course, activeLesson, flatLessons,
   );
 }
 
-// ─── Loading screen ───────────────────────────────────────────────────────────
+// ─── Loading / Access / Empty states (unchanged) ───────────────────────────
 function LoadingScreen() {
   return (
     <div style={{
@@ -466,7 +429,6 @@ function LoadingScreen() {
   );
 }
 
-// ─── Access denied screen ─────────────────────────────────────────────────────
 function AccessDenied() {
   return (
     <div style={{
@@ -503,7 +465,6 @@ function AccessDenied() {
   );
 }
 
-// ─── Empty state (no lesson selected) ────────────────────────────────────────
 function EmptyState({ onOpenSidebar }) {
   return (
     <div style={{
@@ -541,7 +502,7 @@ function EmptyState({ onOpenSidebar }) {
   );
 }
 
-// ─── LearnPage ────────────────────────────────────────────────────────────────
+// ─── LearnPage ──────────────────────────────────────────────────────────────
 export default function LearnPage() {
   const { slug } = useParams();
   const { user } = useAuth();
@@ -553,38 +514,33 @@ export default function LearnPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [progressMap, setProgressMap] = useState({});
-  // FIX #3: Track whether progressMap has been loaded at least once
   const [progressLoaded, setProgressLoaded] = useState(false);
-  const listenerRef = useRef(false);
 
-  // ── Realtime: call invite listener ──────────────────────────────────────────
+  const flatLessons = modules.flatMap(m => m.lessons || []);
+  const lessonIdKey = flatLessons.map(l => l.id).join(',');
+
+  // ── Realtime call listener ──────────────────────────────────────────────
   useEffect(() => {
-    if (!user || listenerRef.current) return;
-    listenerRef.current = true;
-
+    if (!user) return;
     const channel = supabase
       .channel(`call_${user.id}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'video_call_sessions',
-        filter: `student_id=eq.${user.id}`,
-      }, (payload) => {
-        const session = payload.new;
-        if (session.room_ready && !session.joined_by?.includes(user.id)) {
-          sendNotification('Your call is starting!', { body: 'Your instructor is waiting.' });
-          window.dispatchEvent(new CustomEvent('call:invite', { detail: { sessionId: session.id } }));
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'video_call_sessions', filter: `student_id=eq.${user.id}` },
+        (payload) => {
+          const session = payload.new;
+          if (session.room_ready) {
+            sendNotification('Your call is starting!', { body: 'Instructor is waiting.' });
+            window.dispatchEvent(new CustomEvent('call:invite', { detail: { sessionId: session.id } }));
+          }
         }
-      })
+      )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-      listenerRef.current = false;
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [user?.id]);
 
-  // ── Fetch course + modules + enrollment ─────────────────────────────────────
+  // ── Fetch course + modules + enrollment ─────────────────────────────────
   useEffect(() => {
     if (!slug) return;
     async function fetchData() {
@@ -605,7 +561,6 @@ export default function LearnPage() {
         .eq('course_id', courseData.id)
         .order('position');
 
-      // FIX #4: Sort lessons within each module by position
       const sortedModules = (modulesData || []).map(mod => ({
         ...mod,
         lessons: (mod.lessons || []).slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
@@ -621,58 +576,62 @@ export default function LearnPage() {
           .eq('status', 'active')
           .maybeSingle();
         setEnrollment(enrollData || null);
+      } else {
+        setEnrollment(null);
       }
 
       setLoading(false);
     }
     fetchData();
-  }, [slug, user]);
+  }, [slug, user?.id]);
 
-  // ── Load progress ────────────────────────────────────────────────────────────
-  // FIX #5: Use stable lesson IDs instead of modules object in deps to avoid infinite refetch
-  const flatLessons = modules.flatMap(m => m.lessons || []);
-  const lessonIdKey = flatLessons.map(l => l.id).join(',');
-
-  const loadProgress = useCallback(async () => {
-    if (!user || !lessonIdKey) return;
+  // ── Load progress ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user?.id || !lessonIdKey) return;
     const lessonIds = lessonIdKey.split(',').filter(Boolean);
     if (!lessonIds.length) return;
 
-    const { data } = await supabase
-      .from('lesson_progress')
-      .select('lesson_id, completed, passed_quiz, quiz_attempts, last_watched_seconds')
-      .eq('student_id', user.id)
-      .in('lesson_id', lessonIds);
+    const loadProgress = async () => {
+      const { data } = await supabase
+        .from('lesson_progress')
+        .select('lesson_id, completed, passed_quiz, quiz_attempts, last_watched_seconds')
+        .eq('student_id', user.id)
+        .in('lesson_id', lessonIds);
 
-    const map = {};
-    (data || []).forEach(p => { map[p.lesson_id] = p; });
-    setProgressMap(map);
-    setProgressLoaded(true);
-  }, [user, lessonIdKey]);
-
-  useEffect(() => {
+      const map = {};
+      (data || []).forEach(p => { map[p.lesson_id] = p; });
+      setProgressMap(map);
+      setProgressLoaded(true);
+    };
     loadProgress();
-  }, [loadProgress]);
+  }, [user?.id, lessonIdKey]);
 
-  // ── Set initial active lesson once progressMap is loaded ────────────────────
-  // FIX #6: Only runs after progressLoaded=true so lock logic has correct data
+  // ── Auto‑select first unlocked lesson after progress loads ──────────────
   useEffect(() => {
-    if (!progressLoaded || activeLesson || flatLessons.length === 0) return;
+    if (!progressLoaded || flatLessons.length === 0) return;
 
-    // Find the furthest unlocked lesson (resume position)
+    // If there's already an active lesson, make sure it still exists in the fetched data
+    if (activeLesson && !flatLessons.find(l => l.id === activeLesson.id)) {
+      // Ghost lesson detected – reset to first real lesson
+      setActiveLesson(flatLessons[0]);
+      return;
+    }
+
+    if (activeLesson) return; // already set
+
     let resumeLesson = flatLessons[0];
     for (let i = 0; i < flatLessons.length; i++) {
       const locked = isLessonLocked(flatLessons[i], flatLessons, progressMap);
       if (!locked) {
         resumeLesson = flatLessons[i];
       } else {
-        break; // stop at first locked
+        break;
       }
     }
     setActiveLesson(resumeLesson);
-  }, [progressLoaded, lessonIdKey]); // eslint-disable-line
+  }, [progressLoaded, lessonIdKey, flatLessons, activeLesson, progressMap]);
 
-  // ── Mobile: auto-close sidebar ───────────────────────────────────────────────
+  // ── Mobile sidebar auto‑close ─────────────────────────────────────────
   useEffect(() => {
     const handler = () => {
       if (window.innerWidth < 768) setSidebarOpen(false);
@@ -682,13 +641,12 @@ export default function LearnPage() {
     return () => window.removeEventListener('resize', handler);
   }, []);
 
-  // ── Render guards ────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────
   if (loading) return <LoadingScreen />;
   if (!course || !enrollment) return <AccessDenied />;
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: S.canvasBg }}>
-      {/* Sidebar */}
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -702,8 +660,6 @@ export default function LearnPage() {
         progressMap={progressMap}
         userId={user.id}
       />
-
-      {/* Main panel */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
         <Topbar
           sidebarOpen={sidebarOpen}
@@ -714,8 +670,6 @@ export default function LearnPage() {
           progressMap={progressMap}
           setActiveLesson={setActiveLesson}
         />
-
-        {/* Content area */}
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <AnimatePresence mode="wait">
             {activeLesson ? (
@@ -731,7 +685,20 @@ export default function LearnPage() {
                   lesson={activeLesson}
                   courseId={course.id}
                   userId={user.id}
-                  onQuizSubmitted={loadProgress}
+                  onQuizSubmitted={() => {
+                    if (user?.id && lessonIdKey) {
+                      supabase
+                        .from('lesson_progress')
+                        .select('lesson_id, completed, passed_quiz, quiz_attempts, last_watched_seconds')
+                        .eq('student_id', user.id)
+                        .in('lesson_id', lessonIdKey.split(',').filter(Boolean))
+                        .then(({ data }) => {
+                          const map = {};
+                          (data || []).forEach(p => { map[p.lesson_id] = p; });
+                          setProgressMap(map);
+                        });
+                    }
+                  }}
                 />
               </motion.div>
             ) : (
@@ -746,8 +713,6 @@ export default function LearnPage() {
           </AnimatePresence>
         </div>
       </div>
-
-      {/* Floating widgets */}
       <ChatBubble />
       <CallNotification />
     </div>

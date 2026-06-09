@@ -35,6 +35,10 @@ const AdminChat = lazy(() => import('@/features/chat/AdminChatPage'));
 
 const VerifyCertificatePage = lazy(() => import('@/features/certificates/VerifyCertificatePage'));
 
+// Student layout and settings
+const StudentLayout = lazy(() => import('@/shared/layouts/StudentLayout'));
+const SettingsPage = lazy(() => import('@/features/dashboard/student/SettingsPage'));
+
 import PublicLayout from '@/shared/layouts/PublicLayout';
 
 export default function App() {
@@ -45,6 +49,7 @@ export default function App() {
       </div>
     }>
       <Routes>
+        {/* ─── Public routes (Navbar + background) ─── */}
         <Route element={<PublicLayout />}>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
@@ -56,6 +61,7 @@ export default function App() {
           <Route path="/verify/:code" element={<VerifyCertificatePage />} />
         </Route>
 
+        {/* ─── Admin routes ───────────────────────────── */}
         <Route element={<AdminRoute />}>
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/courses" element={<AdminCourses />} />
@@ -67,14 +73,19 @@ export default function App() {
           <Route path="/admin/calls" element={<AdminCallsPage />} />
         </Route>
 
+        {/* ─── Student protected routes (with sidebar layout) ─── */}
         <Route element={<ProtectedRoute />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/dashboard/courses" element={<MyCoursesPage />} />
-          <Route path="/dashboard/certificates" element={<CertificatesPage />} />
-          <Route path="/dashboard/book-call" element={<BookCallPage />} />
-          <Route path="/dashboard/calls" element={<StudentCallsPage />} />
+          <Route element={<StudentLayout />}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/dashboard/courses" element={<MyCoursesPage />} />
+            <Route path="/dashboard/certificates" element={<CertificatesPage />} />
+            <Route path="/dashboard/book-call" element={<BookCallPage />} />
+            <Route path="/dashboard/calls" element={<StudentCallsPage />} />
+            <Route path="/dashboard/settings" element={<SettingsPage />} />
+            <Route path="/learn/:slug" element={<LearnPage />} />
+          </Route>
+          {/* Call room outside layout (full screen) */}
           <Route path="/call/:sessionId" element={<CallRoomPage />} />
-          <Route path="/learn/:slug" element={<LearnPage />} />
         </Route>
       </Routes>
     </Suspense>
