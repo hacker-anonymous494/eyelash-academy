@@ -6,7 +6,6 @@ export function useAdminNotifications() {
   const subscribedRef = useRef(false);
 
   useEffect(() => {
-    // Request permission once when admin dashboard opens
     requestNotificationPermission();
 
     if (subscribedRef.current) return;
@@ -15,16 +14,12 @@ export function useAdminNotifications() {
       .channel('admin_notifications')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'video_call_sessions' }, (payload) => {
         sendNotification('New call booked!', {
-          body: `A student booked a call for ${new Date(payload.new.scheduled_at).toLocaleString()}.`,
+          body: `Student booked a call for ${new Date(payload.new.scheduled_at).toLocaleString()}.`,
         });
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, async (payload) => {
         const msg = payload.new;
-        const { data: room } = await supabase
-          .from('chat_rooms')
-          .select('participants')
-          .eq('id', msg.room_id)
-          .single();
+        const { data: room } = await supabase.from('chat_rooms').select('participants').eq('id', msg.room_id).single();
         if (room && msg.sender_id === room.participants[0]) {
           sendNotification('New support message', { body: msg.content });
         }

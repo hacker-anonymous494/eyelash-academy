@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function CallToast() {
   const [invite, setInvite] = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handler = (e) => {
@@ -10,17 +12,13 @@ export default function CallToast() {
       setTimeout(() => setInvite(null), 30000);
     };
     window.addEventListener('call:invite', handler);
-    window.addEventListener('call:ended', () => setInvite(null));
-    return () => {
-      window.removeEventListener('call:invite', handler);
-      window.removeEventListener('call:ended', () => setInvite(null));
-    };
+    return () => window.removeEventListener('call:invite', handler);
   }, []);
 
   const handleJoin = () => {
     if (invite) {
-      window.dispatchEvent(new CustomEvent('call:join', { detail: { sessionId: invite.sessionId } }));
       setInvite(null);
+      navigate(`/call/${invite.sessionId}`);
     }
   };
 
