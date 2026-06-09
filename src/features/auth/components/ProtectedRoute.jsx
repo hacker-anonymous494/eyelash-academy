@@ -14,13 +14,15 @@ export default function ProtectedRoute() {
     );
   }
 
-  return user ? (
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
     <>
       <CallNotificationProvider />
       <CallToast />
       <Outlet />
     </>
-  ) : (
-    <Navigate to="/login" replace />
   );
 }

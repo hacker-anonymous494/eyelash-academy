@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/config/supabase';
@@ -7,9 +7,11 @@ import { sendNotification } from '@/lib/notifications';
 export default function CallNotificationProvider() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const channelRef = useRef(null);
+  const subscribedRef = useRef(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || subscribedRef.current) return;
 
     const channel = supabase
       .channel(`global_calls_${user.id}`)
@@ -24,12 +26,10 @@ export default function CallNotificationProvider() {
         (payload) => {
           const session = payload.new;
           if (session.room_ready && !session.joined_by?.includes(user.id)) {
-            // Show browser notification
             sendNotification('Your call is starting!', {
               body: 'The instructor is waiting. Click to join.',
             });
 
-            // In-app toast (we'll dispatch a custom event)
             window.dispatchEvent(
               new CustomEvent('call:invite', {
                 detail: { sessionId: session.id },
@@ -38,19 +38,28 @@ export default function CallNotificationProvider() {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          subscribedRef.current = true;
+        }
+      });
 
-    // Listen for "join" from toast
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      subscribedRef.current = false;
+    };
+  }, [user]);
+
+  // Listen for join events from the toast
+  useEffect(() => {
     const handler = (e) => {
       navigate(`/call/${e.detail.sessionId}`);
     };
     window.addEventListener('call:join', handler);
+    return () => window.removeEventListener('call:join', handler);
+  }, [navigate]);
 
-    return () => {
-      supabase.removeChannel(channel);
-      window.removeEventListener('call:join', handler);
-    };
-  }, [user, navigate]);
-
-  return null; // This component doesn't render anything
+  return null;
 }
