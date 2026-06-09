@@ -1,124 +1,551 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/config/supabase';
 import { sendNotification } from '@/lib/notifications';
-import GlassCard from '@/shared/components/GlassCard';
-import PageTransition from '@/shared/components/PageTransition';
-import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import LessonWorkspace from './LessonWorkspace';
+import CourseCompletionBar from './CourseCompletionBar';
 import ChatBubble from '@/features/chat/ChatBubble';
 import CallNotification from '@/features/calls/CallNotification';
 
-// Completion bar component (shows progress and manual certificate button)
-function CourseCompletionBar({ courseId, userId }) {
-  const [progressData, setProgressData] = useState({ completedLessons: 0, totalLessons: 0, allCompleted: false });
-  const [certificateUrl, setCertificateUrl] = useState(null);
-  const [loading, setLoading] = useState(false);
+// ─── Icon helpers ─────────────────────────────────────────────────────────────
+function CheckIcon({ size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+function LockIcon({ size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+function PlayIcon({ size = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <polygon points="5,3 19,12 5,21" />
+    </svg>
+  );
+}
+function ChevronLeftIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
+function ChevronRightIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M9 18l6-6-6-6" />
+    </svg>
+  );
+}
+function MenuIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M3 12h18M3 6h18M3 18h18" />
+    </svg>
+  );
+}
 
-  useEffect(() => {
-    async function fetchCompletionStatus() {
-      const { data: modules } = await supabase
-        .from('modules')
-        .select('id')
-        .eq('course_id', courseId);
-      if (!modules || modules.length === 0) return;
-      const moduleIds = modules.map(m => m.id);
+// ─── Inline styles (no Tailwind dependency for custom tokens) ─────────────────
+const S = {
+  // Sidebar dark skin
+  sidebarBg: '#0f0a10',
+  sidebarBorder: 'rgba(232,112,144,0.18)',
+  sidebarText: 'rgba(255,240,245,0.85)',
+  sidebarMuted: 'rgba(255,180,210,0.45)',
+  sidebarHover: 'rgba(255,255,255,0.05)',
+  sidebarActive: 'rgba(232,112,144,0.14)',
+  sidebarActiveRail: '#e87090',
 
-      const { data: lessons } = await supabase
-        .from('lessons')
-        .select('id')
-        .in('module_id', moduleIds);
-      if (!lessons) return;
-      const totalLessons = lessons.length;
-      const lessonIds = lessons.map(l => l.id);
+  // Main canvas
+  canvasBg: '#faf8f7',
+  cardBg: 'rgba(255,255,255,0.92)',
+  cardBorder: 'rgba(220,160,180,0.2)',
 
-      const { data: completed } = await supabase
-        .from('lesson_progress')
-        .select('lesson_id')
-        .eq('student_id', userId)
-        .in('lesson_id', lessonIds)
-        .eq('passed_quiz', true);
+  // Accent
+  rose: '#c84070',
+  roseLight: '#f0a0b8',
+  roseDark: '#8a2040',
+  gold: '#d4a030',
 
-      const completedCount = completed?.length || 0;
-      const allCompleted = completedCount === totalLessons && totalLessons > 0;
+  // Typography
+  fontDisplay: "'Cormorant Garamond', 'Playfair Display', Georgia, serif",
+  fontBody: "'DM Sans', system-ui, sans-serif",
 
-      setProgressData({
-        completedLessons: completedCount,
-        totalLessons,
-        allCompleted,
-      });
-    }
-    fetchCompletionStatus();
-  }, [courseId, userId]);
+  radius: 16,
+  radiusSm: 10,
+};
 
-  const handleClaimCertificate = async () => {
-    if (loading || certificateUrl) return;
-    setLoading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await fetch('/.netlify/functions/generate-certificate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ courseId }),
-      });
-      if (response.ok) {
-        const { url } = await response.json();
-        setCertificateUrl(url);
-      }
-    } catch (err) {
-      console.error('Failed to generate certificate:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+// ─── Lesson status helpers ────────────────────────────────────────────────────
 
-  if (!progressData.totalLessons) return null;
+/**
+ * FIX #1: Consistent "completed" definition = passed_quiz === true.
+ * A lesson is locked if the PREVIOUS lesson has not been attempted at all
+ * (quiz_attempts empty OR missing). Passing is NOT required to unlock —
+ * only attempting the quiz is required, so students can't get permanently stuck.
+ */
+function isLessonLocked(lesson, flatLessons, progressMap) {
+  const index = flatLessons.findIndex(l => l.id === lesson.id);
+  if (index <= 0) return false; // first lesson always unlocked
+  const prev = flatLessons[index - 1];
+  const prevProgress = progressMap[prev.id];
+  // Unlock next lesson once previous quiz has been attempted (any attempt)
+  return !prevProgress?.quiz_attempts?.length;
+}
 
-  const percent = (progressData.completedLessons / progressData.totalLessons) * 100;
+function lessonStatus(lesson, progressMap) {
+  const p = progressMap[lesson.id];
+  if (!p) return 'untouched';
+  if (p.passed_quiz) return 'passed';
+  if (p.quiz_attempts?.length) return 'attempted';
+  if (p.last_watched_seconds > 0) return 'watching';
+  return 'untouched';
+}
+
+// ─── Sidebar lesson row ───────────────────────────────────────────────────────
+function LessonRow({ lesson, isActive, locked, status, onClick }) {
+  return (
+    <motion.button
+      onClick={onClick}
+      disabled={locked}
+      whileTap={locked ? {} : { scale: 0.98 }}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '10px 12px',
+        borderRadius: S.radiusSm,
+        border: 'none',
+        cursor: locked ? 'not-allowed' : 'pointer',
+        textAlign: 'left',
+        position: 'relative',
+        background: isActive ? S.sidebarActive : 'transparent',
+        transition: 'background 0.2s',
+        opacity: locked ? 0.4 : 1,
+      }}
+      onMouseEnter={e => { if (!isActive && !locked) e.currentTarget.style.background = S.sidebarHover; }}
+      onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+    >
+      {/* Active rail */}
+      {isActive && (
+        <span style={{
+          position: 'absolute', left: 0, top: '20%', bottom: '20%',
+          width: 3, borderRadius: 2, background: S.sidebarActiveRail,
+        }} />
+      )}
+
+      {/* Status dot */}
+      <span style={{
+        width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: locked
+          ? 'rgba(255,255,255,0.06)'
+          : status === 'passed'
+          ? 'rgba(72,200,120,0.15)'
+          : isActive
+          ? 'rgba(232,112,144,0.2)'
+          : 'rgba(255,255,255,0.06)',
+        border: isActive ? `1px solid rgba(232,112,144,0.4)` : '1px solid rgba(255,255,255,0.08)',
+        color: locked
+          ? 'rgba(255,255,255,0.3)'
+          : status === 'passed'
+          ? '#48c878'
+          : isActive
+          ? S.sidebarActiveRail
+          : S.sidebarMuted,
+      }}>
+        {locked
+          ? <LockIcon size={11} />
+          : status === 'passed'
+          ? <CheckIcon size={11} />
+          : <PlayIcon size={10} />
+        }
+      </span>
+
+      <span style={{
+        flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        fontFamily: S.fontBody, fontSize: 13, fontWeight: isActive ? 500 : 400,
+        color: isActive ? 'rgba(255,240,245,0.95)' : S.sidebarText,
+        lineHeight: 1.3,
+      }}>
+        {lesson.title}
+      </span>
+
+      {/* Duration badge */}
+      {lesson.duration_seconds > 0 && (
+        <span style={{
+          fontFamily: S.fontBody, fontSize: 10, color: S.sidebarMuted, flexShrink: 0,
+        }}>
+          {Math.floor(lesson.duration_seconds / 60)}m
+        </span>
+      )}
+    </motion.button>
+  );
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+function Sidebar({ open, onClose, course, modules, activeLesson, setActiveLesson, progressMap, userId }) {
+  const flatLessons = modules.flatMap(m => m.lessons || []);
+  const totalLessons = flatLessons.length;
+  // FIX #2: sidebar completion uses passed_quiz consistently
+  const passedCount = flatLessons.filter(l => progressMap[l.id]?.passed_quiz).length;
+  const pct = totalLessons > 0 ? Math.round((passedCount / totalLessons) * 100) : 0;
 
   return (
-    <div className="mt-4 p-3 bg-white/50 rounded-xl border border-brand-rose-200/40">
-      <div className="flex justify-between text-xs text-gray-600 mb-1">
-        <span>Course progress</span>
-        <span>{progressData.completedLessons} / {progressData.totalLessons} lessons</span>
+    <motion.aside
+      initial={false}
+      animate={{ width: open ? 300 : 0 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      style={{
+        background: S.sidebarBg,
+        borderRight: `1px solid ${S.sidebarBorder}`,
+        display: 'flex', flexDirection: 'column',
+        overflow: 'hidden', flexShrink: 0,
+        height: '100vh', position: 'relative',
+      }}
+    >
+      <div style={{ width: 300, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        {/* Header */}
+        <div style={{
+          padding: '20px 16px 16px',
+          borderBottom: `1px solid ${S.sidebarBorder}`,
+          background: 'rgba(255,255,255,0.03)',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 14 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Lumière logo mark */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <div style={{
+                  width: 22, height: 22, borderRadius: 6,
+                  background: 'linear-gradient(135deg,#c84070,#f07090)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.8)' }} />
+                </div>
+                <span style={{ fontFamily: S.fontDisplay, fontSize: 13, color: S.roseLight, letterSpacing: '0.04em' }}>Lumière Academy</span>
+              </div>
+              <h2 style={{
+                fontFamily: S.fontDisplay, fontSize: 17, fontWeight: 600,
+                color: 'rgba(255,240,245,0.95)', lineHeight: 1.25,
+                overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+              }}>
+                {course.title}
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 8, padding: 6, cursor: 'pointer', color: S.sidebarMuted,
+                display: 'flex', flexShrink: 0, transition: 'all 0.2s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'rgba(255,240,245,0.9)'; e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = S.sidebarMuted; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            >
+              <ChevronLeftIcon />
+            </button>
+          </div>
+
+          {/* Inline progress bar */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <span style={{ fontFamily: S.fontBody, fontSize: 11, color: S.sidebarMuted, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Your progress</span>
+              <span style={{ fontFamily: S.fontBody, fontSize: 11, fontWeight: 600, color: pct === 100 ? '#48c878' : S.roseLight }}>
+                {passedCount}/{totalLessons}
+              </span>
+            </div>
+            <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${pct}%` }}
+                transition={{ duration: 0.8, ease: 'easeOut' }}
+                style={{
+                  height: '100%', borderRadius: 2,
+                  background: pct === 100
+                    ? 'linear-gradient(90deg, #48c878, #80e8a0)'
+                    : 'linear-gradient(90deg, #c84070, #f0a030)',
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Course completion bar (certificate claim) */}
+        <div style={{ padding: '12px 16px 0', flexShrink: 0 }}>
+          <CourseCompletionBar courseId={course.id} userId={userId} passedCount={passedCount} totalLessons={totalLessons} />
+        </div>
+
+        {/* Lesson list */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 24px' }}>
+          {modules.map((mod, mi) => {
+            const modLessons = mod.lessons || [];
+            const modPassed = modLessons.filter(l => progressMap[l.id]?.passed_quiz).length;
+            return (
+              <div key={mod.id} style={{ marginBottom: 4 }}>
+                {/* Module header */}
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 12px 6px',
+                }}>
+                  <span style={{
+                    fontFamily: S.fontBody, fontSize: 10, fontWeight: 700,
+                    color: S.sidebarMuted, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  }}>
+                    {mod.title}
+                  </span>
+                  <span style={{
+                    fontFamily: S.fontBody, fontSize: 10,
+                    color: modPassed === modLessons.length && modLessons.length > 0 ? '#48c878' : S.sidebarMuted,
+                  }}>
+                    {modPassed}/{modLessons.length}
+                  </span>
+                </div>
+
+                {modLessons.map((lesson) => {
+                  const locked = isLessonLocked(lesson, flatLessons, progressMap);
+                  const status = lessonStatus(lesson, progressMap);
+                  return (
+                    <LessonRow
+                      key={lesson.id}
+                      lesson={lesson}
+                      isActive={activeLesson?.id === lesson.id}
+                      locked={locked}
+                      status={status}
+                      onClick={() => !locked && setActiveLesson(lesson)}
+                    />
+                  );
+                })}
+
+                {/* Module divider */}
+                {mi < modules.length - 1 && (
+                  <div style={{ height: 1, background: 'rgba(255,255,255,0.05)', margin: '8px 12px' }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
-      <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-        <div className="h-full bg-brand-rose-500 rounded-full" style={{ width: `${percent}%` }} />
+    </motion.aside>
+  );
+}
+
+// ─── Topbar ───────────────────────────────────────────────────────────────────
+function Topbar({ sidebarOpen, onOpenSidebar, course, activeLesson, flatLessons, progressMap, setActiveLesson }) {
+  const currentIndex = flatLessons.findIndex(l => l.id === activeLesson?.id);
+  const prevLesson = currentIndex > 0 ? flatLessons[currentIndex - 1] : null;
+  const nextLesson = currentIndex < flatLessons.length - 1 ? flatLessons[currentIndex + 1] : null;
+  const nextLocked = nextLesson ? isLessonLocked(nextLesson, flatLessons, progressMap) : false;
+
+  return (
+    <header style={{
+      height: 60, flexShrink: 0,
+      background: 'rgba(250,248,247,0.92)',
+      backdropFilter: 'blur(20px)',
+      borderBottom: '1px solid rgba(200,64,112,0.12)',
+      display: 'flex', alignItems: 'center',
+      padding: '0 16px', gap: 12,
+      position: 'relative', zIndex: 10,
+    }}>
+      {!sidebarOpen && (
+        <button
+          onClick={onOpenSidebar}
+          style={{
+            background: 'rgba(200,64,112,0.08)', border: '1px solid rgba(200,64,112,0.2)',
+            borderRadius: 8, padding: '7px 8px', cursor: 'pointer', color: S.rose,
+            display: 'flex', alignItems: 'center', flexShrink: 0,
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'rgba(200,64,112,0.14)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'rgba(200,64,112,0.08)'}
+          title="Open course menu"
+        >
+          <MenuIcon />
+        </button>
+      )}
+
+      {/* Breadcrumb */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: S.fontBody, fontSize: 11, color: '#9a6070',
+          letterSpacing: '0.04em', marginBottom: 1,
+        }}>
+          {course.title}
+        </div>
+        <h1 style={{
+          fontFamily: S.fontDisplay, fontSize: 18, fontWeight: 600, color: '#1a0810',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          lineHeight: 1.2,
+        }}>
+          {activeLesson?.title || 'Select a lesson'}
+        </h1>
       </div>
 
-      {progressData.allCompleted && (
-        <div className="mt-3 text-center">
-          {certificateUrl ? (
-            <a
-              href={certificateUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block text-sm bg-green-600 text-white px-3 py-1.5 rounded-full hover:bg-green-700 transition"
-            >
-              🎓 View Certificate
-            </a>
-          ) : (
-            <button
-              onClick={handleClaimCertificate}
-              disabled={loading}
-              className="text-sm bg-brand-rose-600 text-white px-3 py-1.5 rounded-full hover:bg-brand-rose-700 transition disabled:opacity-50"
-            >
-              {loading ? 'Generating...' : '🏆 Claim Certificate'}
-            </button>
-          )}
-        </div>
-      )}
+      {/* Prev / Next navigation */}
+      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+        <button
+          onClick={() => prevLesson && setActiveLesson(prevLesson)}
+          disabled={!prevLesson}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            background: 'transparent', border: '1px solid rgba(200,64,112,0.2)',
+            borderRadius: 8, padding: '6px 12px', cursor: prevLesson ? 'pointer' : 'not-allowed',
+            fontFamily: S.fontBody, fontSize: 12, color: prevLesson ? S.rose : '#ccc',
+            transition: 'all 0.2s', opacity: prevLesson ? 1 : 0.4,
+          }}
+        >
+          <ChevronLeftIcon /> Prev
+        </button>
+        <button
+          onClick={() => nextLesson && !nextLocked && setActiveLesson(nextLesson)}
+          disabled={!nextLesson || nextLocked}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            background: nextLesson && !nextLocked ? 'linear-gradient(135deg,#c84070,#f07090)' : 'transparent',
+            border: '1px solid rgba(200,64,112,0.2)',
+            borderRadius: 8, padding: '6px 12px',
+            cursor: nextLesson && !nextLocked ? 'pointer' : 'not-allowed',
+            fontFamily: S.fontBody, fontSize: 12,
+            color: nextLesson && !nextLocked ? 'white' : '#ccc',
+            transition: 'all 0.2s', opacity: nextLesson && !nextLocked ? 1 : 0.4,
+            boxShadow: nextLesson && !nextLocked ? '0 2px 12px rgba(200,64,112,0.3)' : 'none',
+          }}
+        >
+          Next <ChevronRightIcon />
+        </button>
+      </div>
+
+      {/* Dashboard link */}
+      <Link
+        to="/dashboard"
+        style={{
+          fontFamily: S.fontBody, fontSize: 12, color: '#9a6070',
+          textDecoration: 'none', padding: '6px 12px',
+          border: '1px solid rgba(200,64,112,0.15)',
+          borderRadius: 8, flexShrink: 0, transition: 'color 0.2s',
+        }}
+        onMouseEnter={e => e.currentTarget.style.color = S.rose}
+        onMouseLeave={e => e.currentTarget.style.color = '#9a6070'}
+      >
+        ← Dashboard
+      </Link>
+    </header>
+  );
+}
+
+// ─── Loading screen ───────────────────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      background: 'linear-gradient(160deg, #fff6f9 0%, #fdf2ee 100%)',
+    }}>
+      <div style={{ position: 'relative', width: 48, height: 48, marginBottom: 16 }}>
+        <div style={{
+          width: 48, height: 48, borderRadius: '50%',
+          border: '3px solid rgba(200,64,112,0.15)',
+          borderTop: '3px solid #c84070',
+          animation: 'spin 0.8s linear infinite',
+        }} />
+      </div>
+      <p style={{ fontFamily: S.fontDisplay, fontSize: 16, fontStyle: 'italic', color: '#9a4060' }}>
+        Loading your course...
+      </p>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
 
+// ─── Access denied screen ─────────────────────────────────────────────────────
+function AccessDenied() {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'linear-gradient(160deg, #fff6f9 0%, #fdf2ee 100%)',
+    }}>
+      <div style={{
+        background: 'rgba(255,255,255,0.9)', backdropFilter: 'blur(20px)',
+        border: '1px solid rgba(200,64,112,0.2)',
+        borderRadius: 24, padding: '48px 40px', textAlign: 'center', maxWidth: 400,
+        boxShadow: '0 20px 60px rgba(180,60,90,0.12)',
+      }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🔐</div>
+        <h2 style={{ fontFamily: S.fontDisplay, fontSize: 28, fontWeight: 600, color: '#1a0810', marginBottom: 8 }}>
+          Access Restricted
+        </h2>
+        <p style={{ fontFamily: S.fontBody, fontSize: 14, color: '#6a3040', marginBottom: 28, lineHeight: 1.6 }}>
+          You're not enrolled in this course yet. Browse our catalog to find the right program for you.
+        </p>
+        <Link
+          to="/courses"
+          style={{
+            display: 'inline-block',
+            background: 'linear-gradient(135deg,#c84070,#f07090)',
+            color: 'white', fontFamily: S.fontBody, fontSize: 14, fontWeight: 500,
+            padding: '12px 28px', borderRadius: 100, textDecoration: 'none',
+            boxShadow: '0 4px 16px rgba(200,64,112,0.35)',
+          }}
+        >
+          View Courses →
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ─── Empty state (no lesson selected) ────────────────────────────────────────
+function EmptyState({ onOpenSidebar }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      height: '100%', gap: 16,
+    }}>
+      <div style={{
+        width: 72, height: 72, borderRadius: 20,
+        background: 'linear-gradient(135deg, rgba(200,64,112,0.1), rgba(248,112,150,0.06))',
+        border: '1px solid rgba(200,64,112,0.15)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 28,
+      }}>
+        🎬
+      </div>
+      <h3 style={{ fontFamily: S.fontDisplay, fontSize: 22, fontWeight: 500, color: '#1a0810' }}>
+        Choose a lesson to begin
+      </h3>
+      <p style={{ fontFamily: S.fontBody, fontSize: 14, color: '#9a6070', textAlign: 'center', maxWidth: 280 }}>
+        Open the course menu to browse modules and select your next lesson.
+      </p>
+      <button
+        onClick={onOpenSidebar}
+        style={{
+          marginTop: 4,
+          background: 'linear-gradient(135deg,#c84070,#f07090)',
+          color: 'white', fontFamily: S.fontBody, fontSize: 14, fontWeight: 500,
+          padding: '11px 24px', borderRadius: 100, border: 'none', cursor: 'pointer',
+          boxShadow: '0 4px 16px rgba(200,64,112,0.3)',
+        }}
+      >
+        Open course menu
+      </button>
+    </div>
+  );
+}
+
+// ─── LearnPage ────────────────────────────────────────────────────────────────
 export default function LearnPage() {
   const { slug } = useParams();
   const { user } = useAuth();
+
   const [course, setCourse] = useState(null);
   const [modules, setModules] = useState([]);
   const [enrollment, setEnrollment] = useState(null);
@@ -126,9 +553,11 @@ export default function LearnPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [progressMap, setProgressMap] = useState({});
+  // FIX #3: Track whether progressMap has been loaded at least once
+  const [progressLoaded, setProgressLoaded] = useState(false);
   const listenerRef = useRef(false);
 
-  // Student listener for call invites
+  // ── Realtime: call invite listener ──────────────────────────────────────────
   useEffect(() => {
     if (!user || listenerRef.current) return;
     listenerRef.current = true;
@@ -142,14 +571,9 @@ export default function LearnPage() {
         filter: `student_id=eq.${user.id}`,
       }, (payload) => {
         const session = payload.new;
-        console.log('📞 Student listener fired:', session.room_ready, session.joined_by);
         if (session.room_ready && !session.joined_by?.includes(user.id)) {
-          sendNotification('Your call is starting!', {
-            body: 'Instructor is waiting.',
-          });
-          window.dispatchEvent(new CustomEvent('call:invite', {
-            detail: { sessionId: session.id },
-          }));
+          sendNotification('Your call is starting!', { body: 'Your instructor is waiting.' });
+          window.dispatchEvent(new CustomEvent('call:invite', { detail: { sessionId: session.id } }));
         }
       })
       .subscribe();
@@ -160,19 +584,19 @@ export default function LearnPage() {
     };
   }, [user?.id]);
 
-  // Fetch course, modules, enrollment
+  // ── Fetch course + modules + enrollment ─────────────────────────────────────
   useEffect(() => {
+    if (!slug) return;
     async function fetchData() {
+      setLoading(true);
+
       const { data: courseData } = await supabase
         .from('courses')
         .select('*')
         .eq('slug', slug)
         .single();
 
-      if (!courseData) {
-        setLoading(false);
-        return;
-      }
+      if (!courseData) { setLoading(false); return; }
       setCourse(courseData);
 
       const { data: modulesData } = await supabase
@@ -181,7 +605,12 @@ export default function LearnPage() {
         .eq('course_id', courseData.id)
         .order('position');
 
-      setModules(modulesData || []);
+      // FIX #4: Sort lessons within each module by position
+      const sortedModules = (modulesData || []).map(mod => ({
+        ...mod,
+        lessons: (mod.lessons || []).slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
+      }));
+      setModules(sortedModules);
 
       if (user) {
         const { data: enrollData } = await supabase
@@ -199,166 +628,126 @@ export default function LearnPage() {
     fetchData();
   }, [slug, user]);
 
-  // Load progress for all lessons
+  // ── Load progress ────────────────────────────────────────────────────────────
+  // FIX #5: Use stable lesson IDs instead of modules object in deps to avoid infinite refetch
+  const flatLessons = modules.flatMap(m => m.lessons || []);
+  const lessonIdKey = flatLessons.map(l => l.id).join(',');
+
   const loadProgress = useCallback(async () => {
-    if (!user) return;
-    const allLessons = modules.flatMap(m => m.lessons);
-    const lessonIds = allLessons.map(l => l.id);
-    if (lessonIds.length === 0) return;
+    if (!user || !lessonIdKey) return;
+    const lessonIds = lessonIdKey.split(',').filter(Boolean);
+    if (!lessonIds.length) return;
 
     const { data } = await supabase
       .from('lesson_progress')
-      .select('lesson_id, completed, passed_quiz, quiz_attempts')
+      .select('lesson_id, completed, passed_quiz, quiz_attempts, last_watched_seconds')
       .eq('student_id', user.id)
       .in('lesson_id', lessonIds);
 
     const map = {};
     (data || []).forEach(p => { map[p.lesson_id] = p; });
     setProgressMap(map);
-  }, [user, modules]);
+    setProgressLoaded(true);
+  }, [user, lessonIdKey]);
 
   useEffect(() => {
     loadProgress();
   }, [loadProgress]);
 
-  // Set initial active lesson (first unlocked lesson)
+  // ── Set initial active lesson once progressMap is loaded ────────────────────
+  // FIX #6: Only runs after progressLoaded=true so lock logic has correct data
   useEffect(() => {
-    if (modules.length > 0 && !activeLesson) {
-      const flatLessons = modules.flatMap(m => m.lessons);
-      for (let i = 0; i < flatLessons.length; i++) {
-        const lesson = flatLessons[i];
-        const prevLesson = i > 0 ? flatLessons[i - 1] : null;
-        let locked = false;
-        if (prevLesson) {
-          const prevProgress = progressMap[prevLesson.id];
-          locked = !prevProgress || !prevProgress.quiz_attempts || prevProgress.quiz_attempts.length === 0;
-        }
-        if (!locked) {
-          setActiveLesson(lesson);
-          break;
-        }
+    if (!progressLoaded || activeLesson || flatLessons.length === 0) return;
+
+    // Find the furthest unlocked lesson (resume position)
+    let resumeLesson = flatLessons[0];
+    for (let i = 0; i < flatLessons.length; i++) {
+      const locked = isLessonLocked(flatLessons[i], flatLessons, progressMap);
+      if (!locked) {
+        resumeLesson = flatLessons[i];
+      } else {
+        break; // stop at first locked
       }
     }
-  }, [modules, progressMap, activeLesson]);
+    setActiveLesson(resumeLesson);
+  }, [progressLoaded, lessonIdKey]); // eslint-disable-line
 
-  const isLessonLocked = (lesson, flatLessons, progressMap) => {
-    const index = flatLessons.findIndex(l => l.id === lesson.id);
-    if (index <= 0) return false;
-    const prevLesson = flatLessons[index - 1];
-    const prevProgress = progressMap[prevLesson.id];
-    return !prevProgress || !prevProgress.quiz_attempts || prevProgress.quiz_attempts.length === 0;
-  };
+  // ── Mobile: auto-close sidebar ───────────────────────────────────────────────
+  useEffect(() => {
+    const handler = () => {
+      if (window.innerWidth < 768) setSidebarOpen(false);
+    };
+    handler();
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
-  const flatLessons = modules.flatMap(m => m.lessons);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#fff6f9] to-[#fff0f4]">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-brand-rose-200 border-t-brand-rose-600" />
-      </div>
-    );
-  }
-
-  if (!course || !enrollment) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <GlassCard className="p-8 text-center">
-          <h2 className="text-2xl font-display font-semibold">Access Denied</h2>
-          <p className="text-gray-500 mt-2">You are not enrolled in this course.</p>
-          <Link to="/courses" className="btn-primary mt-4 inline-block">
-            View Courses
-          </Link>
-        </GlassCard>
-      </div>
-    );
-  }
+  // ── Render guards ────────────────────────────────────────────────────────────
+  if (loading) return <LoadingScreen />;
+  if (!course || !enrollment) return <AccessDenied />;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#fff6f9] via-[#fdf2ee] to-[#fff0f4] relative overflow-hidden">
-      <BackgroundBlobs section="mid" />
-      <PageTransition>
-        <div className="flex h-screen relative z-10">
-          {/* Sidebar */}
-          <div className={`bg-white/80 backdrop-blur-xl border-r border-brand-rose-200/40 flex flex-col transition-all duration-300 ${sidebarOpen ? 'w-80' : 'w-0'} overflow-hidden`}>
-            <div className="p-4 border-b border-brand-rose-200/40 flex items-center justify-between">
-              <h2 className="font-display font-semibold text-lg truncate">{course.title}</h2>
-              <button onClick={() => setSidebarOpen(false)} className="text-brand-rose-600 hover:text-brand-rose-800">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <CourseCompletionBar courseId={course.id} userId={user.id} />
-              {modules.map((mod) => (
-                <div key={mod.id}>
-                  <h3 className="text-xs font-semibold text-brand-rose-600 uppercase tracking-wider mb-2">{mod.title}</h3>
-                  <div className="space-y-1">
-                    {mod.lessons.map((lesson) => {
-                      const locked = isLessonLocked(lesson, flatLessons, progressMap);
-                      return (
-                        <button
-                          key={lesson.id}
-                          onClick={() => !locked && setActiveLesson(lesson)}
-                          disabled={locked}
-                          className={`w-full text-left p-3 rounded-xl transition-all flex items-center gap-3 text-sm ${
-                            activeLesson?.id === lesson.id
-                              ? 'bg-brand-rose-100 border border-brand-rose-300 text-brand-rose-800'
-                              : locked
-                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                              : 'hover:bg-white/50 border border-transparent'
-                          }`}
-                        >
-                          <span className="w-6 h-6 rounded-full bg-brand-rose-100 flex items-center justify-center text-xs">
-                            {locked ? '🔒' : (lesson.free_preview ? '🎥' : '📘')}
-                          </span>
-                          <span className="flex-1 truncate">{lesson.title}</span>
-                          {progressMap[lesson.id]?.passed_quiz && (
-                            <span className="text-green-600 text-xs">✅</span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: S.canvasBg }}>
+      {/* Sidebar */}
+      <Sidebar
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        course={course}
+        modules={modules}
+        activeLesson={activeLesson}
+        setActiveLesson={(lesson) => {
+          setActiveLesson(lesson);
+          if (window.innerWidth < 768) setSidebarOpen(false);
+        }}
+        progressMap={progressMap}
+        userId={user.id}
+      />
 
-          {/* Main content */}
-          <div className="flex-1 flex flex-col">
-            <div className="bg-white/80 backdrop-blur-xl border-b border-brand-rose-200/40 p-4 flex items-center gap-4">
-              {!sidebarOpen && (
-                <button onClick={() => setSidebarOpen(true)} className="text-brand-rose-600">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
-                </button>
-              )}
-              <div className="flex-1">
-                <h1 className="font-display font-semibold text-xl truncate">{activeLesson?.title || 'Select a lesson'}</h1>
-                <p className="text-xs text-gray-500">{course.title}</p>
-              </div>
-              <Link to="/dashboard" className="btn-ghost text-xs px-3 py-1.5">
-                Dashboard
-              </Link>
-            </div>
+      {/* Main panel */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        <Topbar
+          sidebarOpen={sidebarOpen}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          course={course}
+          activeLesson={activeLesson}
+          flatLessons={flatLessons}
+          progressMap={progressMap}
+          setActiveLesson={setActiveLesson}
+        />
 
-            <div className="flex-1 bg-black/5 relative overflow-hidden">
-              {activeLesson ? (
+        {/* Content area */}
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <AnimatePresence mode="wait">
+            {activeLesson ? (
+              <motion.div
+                key={activeLesson.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.25 }}
+                style={{ height: '100%' }}
+              >
                 <LessonWorkspace
-                  key={activeLesson.id}
                   lesson={activeLesson}
                   courseId={course.id}
                   userId={user.id}
-                  onQuizTaken={() => loadProgress()}
+                  onQuizSubmitted={loadProgress}
                 />
-              ) : (
-                <div className="flex items-center justify-center h-full text-gray-400">
-                  Select a lesson to start learning
-                </div>
-              )}
-            </div>
-          </div>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                style={{ height: '100%' }}
+              >
+                <EmptyState onOpenSidebar={() => setSidebarOpen(true)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-      </PageTransition>
+      </div>
 
+      {/* Floating widgets */}
       <ChatBubble />
       <CallNotification />
     </div>
