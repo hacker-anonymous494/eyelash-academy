@@ -1,5 +1,7 @@
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import CallNotificationProvider from '@/features/calls/CallNotificationProvider';
+import CallToast from '@/features/calls/CallToast';
 
 export default function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -12,5 +14,13 @@ export default function ProtectedRoute() {
     );
   }
 
-  return user ? <Outlet /> : <Navigate to="/login" replace />;
+  return user ? (
+    <>
+      <CallNotificationProvider />
+      <CallToast />
+      <Outlet />
+    </>
+  ) : (
+    <Navigate to="/login" replace />
+  );
 }

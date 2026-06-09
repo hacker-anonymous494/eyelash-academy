@@ -7,9 +7,13 @@ export function useWebRTC(sessionId, userId) {
   const [status, setStatus] = useState('idle'); // idle / calling / connected / ended
   const peerRef = useRef(null);
   const channelRef = useRef(null);
+  const isOfferer = useRef(false);
+  const localStreamRef = useRef(null);
 
+  // Subscribe to signaling channel
   useEffect(() => {
     if (!sessionId || !userId) return;
+
     const channel = supabase.channel(`webrtc_${sessionId}`);
     channelRef.current = channel;
 
@@ -17,29 +21,29 @@ export function useWebRTC(sessionId, userId) {
       .on('broadcast', { event: 'signal' }, (payload) => {
         handleSignal(payload.payload);
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Signaling channel ready');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
-      cleanupMedia();
     };
   }, [sessionId, userId]);
 
-  const cleanupMedia = () => {
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      setLocalStream(null);
+  // Handle incoming signal (offer, answer, ice)
+  const handleSignal = useCallback(async (data) => {
+    if (!peerRef.current) {
+      // If we receive an offer, we must be the answerer – create peer now
+      if (data.type === 'offer') {
+        await createPeer(false);
+        isOfferer.current = false;
+      } else {
+        return; // ignore if no peer yet (shouldn't happen)
+      }
     }
-    if (peerRef.current) {
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-    setRemoteStream(null);
-    setStatus('idle');
-  };
 
-  const handleSignal = async (data) => {
-    if (!peerRef.current) await createPeer();
     const peer = peerRef.current;
     try {
       if (data.type === 'offer') {
@@ -55,53 +59,98 @@ export function useWebRTC(sessionId, userId) {
     } catch (e) {
       console.error('Signal error:', e);
     }
-  };
+  }, [sendSignal]);
 
-  const createPeer = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    setLocalStream(stream);
+  const createPeer = useCallback(async (asOfferer) => {
+    let stream = localStreamRef.current;
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+    }
+
     const peer = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });
+
     stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
     peer.onicecandidate = (e) => {
       if (e.candidate) {
         sendSignal({ type: 'ice', candidate: e.candidate.toJSON() });
       }
     };
+
     peer.ontrack = (e) => {
       setRemoteStream(e.streams[0]);
       setStatus('connected');
     };
+
     peer.oniceconnectionstatechange = () => {
       if (peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') {
         setStatus('ended');
       }
     };
+
     peerRef.current = peer;
-    return peer;
-  };
 
-  const sendSignal = (data) => {
-    channelRef.current?.send({
-      type: 'broadcast',
-      event: 'signal',
-      payload: data,
-    });
-  };
+    if (asOfferer) {
+      isOfferer.current = true;
+      setTimeout(async () => {
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        sendSignal({ type: 'offer', sdp: peer.localDescription });
+      }, 1000); // delay to ensure answerer peer is ready
+    }
+  }, [sendSignal]);
 
-  const startCall = async () => {
+  const sendSignal = useCallback((data) => {
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload: data,
+      });
+    }
+  }, []);
+
+  const startCall = useCallback(async () => {
     setStatus('calling');
-    await createPeer();
-    const peer = peerRef.current;
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    sendSignal({ type: 'offer', sdp: peer.localDescription });
-  };
+    // Determine if we are the offerer (first to join)
+    const { data: session } = await supabase
+      .from('video_call_sessions')
+      .select('offerer_id')
+      .eq('id', sessionId)
+      .single();
 
-  const endCall = () => {
-    cleanupMedia();
-  };
+    if (!session) return;
+
+    if (!session.offerer_id) {
+      // Become the offerer
+      await supabase
+        .from('video_call_sessions')
+        .update({ offerer_id: userId })
+        .eq('id', sessionId);
+      await createPeer(true);
+    } else {
+      // We are the answerer
+      await createPeer(false);
+    }
+  }, [sessionId, userId, createPeer]);
+
+  const endCall = useCallback(() => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+      localStreamRef.current = null;
+    }
+    if (peerRef.current) {
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+    setLocalStream(null);
+    setRemoteStream(null);
+    setStatus('idle');
+  }, []);
 
   return { localStream, remoteStream, status, startCall, endCall };
 }

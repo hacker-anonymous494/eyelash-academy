@@ -18,10 +18,11 @@ const LearnPage = lazy(() => import('@/features/courses/player/LearnPage'));
 const CertificatesPage = lazy(() => import('@/features/dashboard/student/CertificatesPage'));
 const MyCoursesPage = lazy(() => import('@/features/dashboard/student/MyCoursesPage'));
 
-// New call‑related pages
+// Call‑related pages
 const BookCallPage = lazy(() => import('@/features/calls/BookCallPage'));
 const CallRoomPage = lazy(() => import('@/features/calls/CallRoomPage'));
 const AdminCallsPage = lazy(() => import('@/features/calls/AdminCallsPage'));
+const StudentCallsPage = lazy(() => import('@/features/calls/StudentCallsPage'));
 
 // Admin pages
 const AdminRoute = lazy(() => import('@/features/auth/components/AdminRoute'));
@@ -34,7 +35,9 @@ const AdminChat = lazy(() => import('@/features/chat/AdminChatPage'));
 
 const VerifyCertificatePage = lazy(() => import('@/features/certificates/VerifyCertificatePage'));
 
-const StudentCallsPage = lazy(() => import('@/features/calls/StudentCallsPage'));
+// Global call notification components (placed inside ProtectedRoute)
+import CallNotificationProvider from '@/features/calls/CallNotificationProvider';
+import CallToast from '@/features/calls/CallToast';
 
 import PublicLayout from '@/shared/layouts/PublicLayout';
 
@@ -45,6 +48,9 @@ export default function App() {
         <div className="animate-spin rounded-full h-12 w-12 border-4 border-brand-rose-200 border-t-brand-rose-600" />
       </div>
     }>
+      {/* Global toast for call invites – visible on any page */}
+      <CallToast />
+
       <Routes>
         {/* ─── Public routes (with Navbar + background) ── */}
         <Route element={<PublicLayout />}>
@@ -73,13 +79,16 @@ export default function App() {
 
         {/* ─── Student protected routes ────────────────── */}
         <Route element={<ProtectedRoute />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/dashboard/courses" element={<MyCoursesPage />} />
-          <Route path="/dashboard/certificates" element={<CertificatesPage />} />
-          <Route path="/dashboard/book-call" element={<BookCallPage />} />
-          <Route path="/call/:sessionId" element={<CallRoomPage />} />
-          <Route path="/learn/:slug" element={<LearnPage />} />
-          <Route path="/dashboard/calls" element={<StudentCallsPage />} />
+          {/* Call notification provider wraps all student pages */}
+          <Route element={<CallNotificationProvider />}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/dashboard/courses" element={<MyCoursesPage />} />
+            <Route path="/dashboard/certificates" element={<CertificatesPage />} />
+            <Route path="/dashboard/book-call" element={<BookCallPage />} />
+            <Route path="/dashboard/calls" element={<StudentCallsPage />} />
+            <Route path="/call/:sessionId" element={<CallRoomPage />} />
+            <Route path="/learn/:slug" element={<LearnPage />} />
+          </Route>
         </Route>
       </Routes>
     </Suspense>
