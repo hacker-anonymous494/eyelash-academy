@@ -4,20 +4,32 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/config/supabase';
 import { sendNotification } from '@/lib/notifications';
 
+// Module‑level flag – survives React re‑mounts
+let globalChannel = null;
+let globalSubscribedUserId = null;
+
 export default function CallNotificationProvider() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const channelRef = useRef(null);
-  const subscribedUserId = useRef(null);
 
   useEffect(() => {
-    // If no user, or the subscription is already active for this user, do nothing
-    if (!user || subscribedUserId.current === user.id) return;
+    // No user? Clean up and exit
+    if (!user) {
+      if (globalChannel) {
+        supabase.removeChannel(globalChannel);
+        globalChannel = null;
+        globalSubscribedUserId = null;
+      }
+      return;
+    }
 
-    // Clean up any previous channel (shouldn't exist, but just in case)
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
+    // Already subscribed for this user? Skip
+    if (globalSubscribedUserId === user.id) return;
+
+    // Remove any stale channel
+    if (globalChannel) {
+      supabase.removeChannel(globalChannel);
+      globalChannel = null;
     }
 
     const channel = supabase
@@ -47,18 +59,17 @@ export default function CallNotificationProvider() {
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          subscribedUserId.current = user.id;
+          globalSubscribedUserId = user.id;
         }
       });
 
-    channelRef.current = channel;
+    globalChannel = channel;
 
     return () => {
-      supabase.removeChannel(channel);
-      channelRef.current = null;
-      subscribedUserId.current = null;
+      // Do NOT clean up on effect re‑run; only on actual logout / unmount
+      // We handle cleanup in the top of this effect when user changes
     };
-  }, [user?.id]); // Only re‑run when the actual user ID changes
+  }, [user?.id]);
 
   // Join event listener
   useEffect(() => {
