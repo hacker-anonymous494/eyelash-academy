@@ -8,10 +8,17 @@ export default function CallNotificationProvider() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const channelRef = useRef(null);
-  const subscribedRef = useRef(false);
+  const subscribedUserId = useRef(null);
 
   useEffect(() => {
-    if (!user || subscribedRef.current) return;
+    // If no user, or the subscription is already active for this user, do nothing
+    if (!user || subscribedUserId.current === user.id) return;
+
+    // Clean up any previous channel (shouldn't exist, but just in case)
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
 
     const channel = supabase
       .channel(`global_calls_${user.id}`)
@@ -40,7 +47,7 @@ export default function CallNotificationProvider() {
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          subscribedRef.current = true;
+          subscribedUserId.current = user.id;
         }
       });
 
@@ -48,11 +55,12 @@ export default function CallNotificationProvider() {
 
     return () => {
       supabase.removeChannel(channel);
-      subscribedRef.current = false;
+      channelRef.current = null;
+      subscribedUserId.current = null;
     };
-  }, [user]);
+  }, [user?.id]); // Only re‑run when the actual user ID changes
 
-  // Listen for join events from the toast
+  // Join event listener
   useEffect(() => {
     const handler = (e) => {
       navigate(`/call/${e.detail.sessionId}`);
