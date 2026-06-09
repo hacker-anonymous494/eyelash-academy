@@ -6,6 +6,8 @@ const navItems = [
   { to: '/admin/courses', label: 'Courses', icon: '📚' },
   { to: '/admin/students', label: 'Students', icon: '👩‍🎓' },
   { to: '/admin/orders', label: 'Orders', icon: '💰' },
+  { to: '/admin/chat', label: 'Chat', icon: '💬' },
+  { to: '/admin/calls', label: 'Calls', icon: '📞' },
 ];
 
 export default function AdminLayout({ children }) {

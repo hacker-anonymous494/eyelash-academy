@@ -41,14 +41,24 @@ export default function AdminCourseEditorPage() {
           setStatus(course.status);
           setLoadedCourseId(course.id);
 
-          // Fetch modules with lessons and quizzes (with questions)
+          // Fetch modules with lessons and quizzes
           const { data: mods } = await supabase
             .from('modules')
             .select('*, lessons(*, quizzes(*, quiz_questions(*)))')
             .eq('course_id', id)
             .order('position');
 
-          setModules(mods || []);
+          // Ensure each lesson has default empty arrays for tasks and links if missing
+          const normalizedMods = (mods || []).map(mod => ({
+            ...mod,
+            lessons: (mod.lessons || []).map(lesson => ({
+              ...lesson,
+              tasks: lesson.tasks || [],
+              helpful_links: lesson.helpful_links || [],
+              summary: lesson.summary || '',
+            })),
+          }));
+          setModules(normalizedMods);
         }
       };
       fetchCourse();
@@ -114,8 +124,11 @@ export default function AdminCourseEditorPage() {
         id: `temp-${Date.now()}-${Math.random()}`,
         title: 'New Lesson',
         video_url: '',
+        summary: '',
+        tasks: [],
+        helpful_links: [],
         position: updated[modIdx].lessons.length,
-        quizzes: [], // will be populated after save
+        quizzes: [],
       },
     ];
     setModules(updated);
@@ -184,7 +197,7 @@ export default function AdminCourseEditorPage() {
     const updated = [...modules];
     const q = updated[modIdx].lessons[lessonIdx].quizzes[quizIdx].quiz_questions[qIdx];
     if (field === 'options') {
-      q.options = value; // value is the whole array
+      q.options = value;
     } else {
       q[field] = value;
     }
@@ -197,7 +210,7 @@ export default function AdminCourseEditorPage() {
     setModules(updated);
   };
 
-  // Save modules, lessons, and quizzes
+  // Save modules, lessons, and quizzes (including summary, tasks, helpful_links)
   const saveModulesAndLessons = async (courseId) => {
     // Delete existing modules (and cascade will remove lessons/quizzes)
     if (!isNew) {
@@ -226,13 +239,20 @@ export default function AdminCourseEditorPage() {
 
       if (mod.lessons.length > 0) {
         for (const [lIdx, lesson] of mod.lessons.entries()) {
-          // Insert lesson
+          // Prepare tasks and helpful_links as JSON
+          const tasksJson = lesson.tasks || [];
+          const helpfulLinksJson = lesson.helpful_links || [];
+
+          // Insert lesson with new fields
           const { data: lessonData } = await supabase
             .from('lessons')
             .insert({
               module_id: modData.id,
               title: lesson.title,
               video_url: lesson.video_url,
+              summary: lesson.summary || '',
+              tasks: tasksJson,
+              helpful_links: helpfulLinksJson,
               position: lIdx,
               has_quiz: lesson.quizzes && lesson.quizzes.length > 0,
             })
@@ -275,6 +295,25 @@ export default function AdminCourseEditorPage() {
     await saveModulesAndLessons(courseId);
     alert('Course saved successfully!');
     navigate(`/admin/courses/${courseId}`);
+  };
+
+  // Helper for tasks textarea -> array
+  const tasksToText = (tasksArray) => (tasksArray || []).join('\n');
+  const tasksFromText = (text) => text.split(/\r?\n/).filter(line => line.trim().length > 0);
+
+  // Helper for links textarea -> array of {label, url}
+  const linksToText = (linksArray) => {
+    return (linksArray || []).map(link => link.label && link.label !== link.url ? `${link.label}|${link.url}` : link.url).join('\n');
+  };
+  const linksFromText = (text) => {
+    const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+    return lines.map(line => {
+      const pipeIndex = line.indexOf('|');
+      if (pipeIndex !== -1) {
+        return { label: line.slice(0, pipeIndex).trim(), url: line.slice(pipeIndex + 1).trim() };
+      }
+      return { label: line.trim(), url: line.trim() };
+    });
   };
 
   return (
@@ -326,12 +365,12 @@ export default function AdminCourseEditorPage() {
             </div>
             <div className="space-y-3 ml-4">
               {mod.lessons.map((lesson, lessonIdx) => (
-                <div key={lesson.id} className="border rounded-lg p-3 space-y-3">
-                  <div className="flex flex-wrap gap-2 items-center">
+                <div key={lesson.id} className="border rounded-lg p-4 space-y-4 bg-white/50">
+                  <div className="flex flex-wrap gap-2 items-center justify-between">
                     <input
                       value={lesson.title}
                       onChange={(e) => updateLesson(modIdx, lessonIdx, 'title', e.target.value)}
-                      className="border rounded px-2 py-1 flex-1 min-w-[150px]"
+                      className="border rounded px-2 py-1 flex-1 min-w-[200px]"
                       placeholder="Lesson title"
                     />
                     <div className="flex items-center gap-2">
@@ -346,8 +385,47 @@ export default function AdminCourseEditorPage() {
                     </div>
                   </div>
 
+                  {/* --- NEW FIELDS: Summary, Tasks, Helpful Links --- */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                    {/* Summary */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Summary</label>
+                      <textarea
+                        value={lesson.summary || ''}
+                        onChange={(e) => updateLesson(modIdx, lessonIdx, 'summary', e.target.value)}
+                        rows={3}
+                        className="w-full border rounded px-2 py-1 text-sm"
+                        placeholder="Brief summary of the lesson..."
+                      />
+                    </div>
+
+                    {/* Tasks (one per line) */}
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Tasks (one per line)</label>
+                      <textarea
+                        value={tasksToText(lesson.tasks)}
+                        onChange={(e) => updateLesson(modIdx, lessonIdx, 'tasks', tasksFromText(e.target.value))}
+                        rows={3}
+                        className="w-full border rounded px-2 py-1 text-sm font-mono"
+                        placeholder="Watch video&#10;Take notes&#10;Complete quiz"
+                      />
+                    </div>
+
+                    {/* Helpful Links (URL or Label|URL per line) */}
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Helpful Links (one per line, format: Label|URL or just URL)</label>
+                      <textarea
+                        value={linksToText(lesson.helpful_links)}
+                        onChange={(e) => updateLesson(modIdx, lessonIdx, 'helpful_links', linksFromText(e.target.value))}
+                        rows={2}
+                        className="w-full border rounded px-2 py-1 text-sm font-mono"
+                        placeholder="Documentation|https://example.com&#10;https://another.com"
+                      />
+                    </div>
+                  </div>
+
                   {/* ─── Quiz section ────────────────────────── */}
-                  <div className="bg-brand-rose-50/50 rounded-lg p-3 border border-brand-rose-100">
+                  <div className="bg-brand-rose-50/50 rounded-lg p-3 border border-brand-rose-100 mt-2">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-sm font-medium">📝 Quiz</span>
                       {lesson.quizzes && lesson.quizzes.length > 0 ? (
@@ -355,7 +433,6 @@ export default function AdminCourseEditorPage() {
                           <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Enabled</span>
                           <button
                             onClick={() => {
-                              // Remove quiz
                               const updated = [...modules];
                               updated[modIdx].lessons[lessonIdx].quizzes = [];
                               setModules(updated);

@@ -89,7 +89,7 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
         lesson_id: lessonId,
         quiz_attempts: updatedAttempts,
         passed_quiz: hasPassed,
-        completed: hasPassed, // also mark lesson as completed if passed
+        completed: hasPassed,
         completed_at: hasPassed ? new Date().toISOString() : null,
       }, { onConflict: 'student_id,lesson_id' });
 
@@ -100,7 +100,8 @@ export default function QuizPanel({ lessonId, userId, onQuizPassed }) {
       setAttempts(updatedAttempts.length);
       setLastAttemptDate(newAttempt.date);
 
-      if (hasPassed && onQuizPassed) {
+      // ✅ Notify parent that quiz was taken (even if failed)
+      if (onQuizPassed) {
         onQuizPassed();
       }
     }

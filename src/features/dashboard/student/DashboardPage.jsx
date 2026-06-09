@@ -6,10 +6,14 @@ import GlassCard from '@/shared/components/GlassCard';
 import GradientText from '@/shared/components/GradientText';
 import PageTransition from '@/shared/components/PageTransition';
 import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
+import ChatBubble from '@/features/chat/ChatBubble';
+import { useCallNotifications } from '@/features/calls/useCallNotifications';
+import CallNotification from '@/features/calls/CallNotification';
 
 export default function DashboardPage() {
   const { user, profile } = useAuth();
   const { signOut } = useSignOut();
+  useCallNotifications(); // 👈 initialize call notification polling
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fff6f9] via-[#fdf2ee] to-[#fff0f4] relative overflow-hidden">
@@ -50,15 +54,17 @@ export default function DashboardPage() {
               </GlassCard>
             </Link>
 
-            <GlassCard className="card-hover flex items-center gap-4 p-6">
-              <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
-                📜
-              </div>
-              <div>
-                <h3 className="font-semibold text-lg">Certificates</h3>
-                <p className="text-sm text-brand-rose-600/60">Your achievements</p>
-              </div>
-            </GlassCard>
+            <Link to="/dashboard/certificates">
+              <GlassCard className="card-hover flex items-center gap-4 p-6 cursor-pointer">
+                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
+                  📜
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg">Certificates</h3>
+                  <p className="text-sm text-brand-rose-600/60">Your achievements</p>
+                </div>
+              </GlassCard>
+            </Link>
 
             <GlassCard className="card-hover flex items-center gap-4 p-6">
               <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
@@ -69,9 +75,38 @@ export default function DashboardPage() {
                 <p className="text-sm text-brand-rose-600/60">Chat with mentors</p>
               </div>
             </GlassCard>
+
+            <Link to="/dashboard/book-call">
+              <GlassCard className="card-hover cursor-pointer flex items-center gap-4 p-6">
+                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
+                  📞
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg">Book a 1‑on‑1 Call</h3>
+                  <p className="text-sm text-brand-rose-600/60">Schedule a mentoring session</p>
+                </div>
+              </GlassCard>
+            </Link>
+            <Link to="/dashboard/calls">
+  <GlassCard className="card-hover cursor-pointer flex items-center gap-4 p-6">
+    <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
+      📞
+    </div>
+    <div>
+      <h3 className="font-semibold text-lg">My Calls</h3>
+      <p className="text-sm text-brand-rose-600/60">View scheduled sessions</p>
+    </div>
+  </GlassCard>
+</Link>
           </div>
         </div>
       </PageTransition>
+
+      {/* ChatBubble */}
+      <ChatBubble />
+
+      {/* Call notification overlay */}
+      <CallNotification />
     </div>
   );
 }

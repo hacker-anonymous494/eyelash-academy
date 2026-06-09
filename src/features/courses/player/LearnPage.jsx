@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase } from '@/config/supabase';
 import GlassCard from '@/shared/components/GlassCard';
 import PageTransition from '@/shared/components/PageTransition';
 import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
 import { useAuth } from '@/features/auth/hooks/useAuth';
-import LessonPlayer from './LessonPlayer';
+import LessonWorkspace from './LessonWorkspace';
+import ChatBubble from '@/features/chat/ChatBubble';
+import { useCallNotifications } from '@/features/calls/useCallNotifications';
+import CallNotification from '@/features/calls/CallNotification';
 
 // Completion bar component (shows progress and manual certificate button)
 function CourseCompletionBar({ courseId, userId }) {
@@ -35,7 +38,7 @@ function CourseCompletionBar({ courseId, userId }) {
         .select('lesson_id')
         .eq('student_id', userId)
         .in('lesson_id', lessonIds)
-        .eq('passed_quiz', true); // use passed_quiz
+        .eq('passed_quiz', true);
 
       const completedCount = completed?.length || 0;
       const allCompleted = completedCount === totalLessons && totalLessons > 0;
@@ -122,7 +125,10 @@ export default function LearnPage() {
   const [activeLesson, setActiveLesson] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [progressMap, setProgressMap] = useState({}); // { lessonId: { passed_quiz, completed } }
+  const [progressMap, setProgressMap] = useState({});
+
+  // Call notifications hook
+  useCallNotifications();
 
   // Fetch course, modules, enrollment
   useEffect(() => {
@@ -163,38 +169,41 @@ export default function LearnPage() {
     fetchData();
   }, [slug, user]);
 
-  // Fetch progress (passed_quiz) for all lessons
+  // Load progress for all lessons
+  const loadProgress = useCallback(async () => {
+    if (!user) return;
+    const allLessons = modules.flatMap(m => m.lessons);
+    const lessonIds = allLessons.map(l => l.id);
+    if (lessonIds.length === 0) return;
+
+    const { data } = await supabase
+      .from('lesson_progress')
+      .select('lesson_id, completed, passed_quiz, quiz_attempts')
+      .eq('student_id', user.id)
+      .in('lesson_id', lessonIds);
+
+    const map = {};
+    (data || []).forEach(p => { map[p.lesson_id] = p; });
+    setProgressMap(map);
+  }, [user, modules]);
+
   useEffect(() => {
-    async function fetchProgress() {
-      if (!user) return;
-      const allLessons = modules.flatMap(m => m.lessons);
-      const lessonIds = allLessons.map(l => l.id);
-      if (lessonIds.length === 0) return;
-
-      const { data } = await supabase
-        .from('lesson_progress')
-        .select('lesson_id, completed, passed_quiz')
-        .eq('student_id', user.id)
-        .in('lesson_id', lessonIds);
-
-      const map = {};
-      (data || []).forEach(p => {
-        map[p.lesson_id] = { completed: p.completed, passed_quiz: p.passed_quiz };
-      });
-      setProgressMap(map);
-    }
-    if (modules.length > 0 && user) fetchProgress();
-  }, [modules, user]);
+    loadProgress();
+  }, [loadProgress]);
 
   // Set initial active lesson (first unlocked lesson)
   useEffect(() => {
     if (modules.length > 0 && !activeLesson) {
-      // Find first unlocked lesson
       const flatLessons = modules.flatMap(m => m.lessons);
       for (let i = 0; i < flatLessons.length; i++) {
         const lesson = flatLessons[i];
-        const isLocked = i > 0 ? !progressMap[flatLessons[i-1].id]?.passed_quiz : false;
-        if (!isLocked) {
+        const prevLesson = i > 0 ? flatLessons[i - 1] : null;
+        let locked = false;
+        if (prevLesson) {
+          const prevProgress = progressMap[prevLesson.id];
+          locked = !prevProgress || !prevProgress.quiz_attempts || prevProgress.quiz_attempts.length === 0;
+        }
+        if (!locked) {
           setActiveLesson(lesson);
           break;
         }
@@ -202,20 +211,15 @@ export default function LearnPage() {
     }
   }, [modules, progressMap, activeLesson]);
 
-  // Helper to determine if a lesson is locked
-  const isLessonLocked = (lesson, idx, flatLessons) => {
-    if (idx === 0) return false; // first lesson always unlocked
-    const prevLesson = flatLessons[idx - 1];
-    return !progressMap[prevLesson.id]?.passed_quiz;
+  const isLessonLocked = (lesson, flatLessons, progressMap) => {
+    const index = flatLessons.findIndex(l => l.id === lesson.id);
+    if (index <= 0) return false;
+    const prevLesson = flatLessons[index - 1];
+    const prevProgress = progressMap[prevLesson.id];
+    return !prevProgress || !prevProgress.quiz_attempts || prevProgress.quiz_attempts.length === 0;
   };
 
-  // Callback from LessonPlayer when progress changes (quiz passed)
-  const handleProgressUpdate = (lessonId, newProgress) => {
-    setProgressMap(prev => ({
-      ...prev,
-      [lessonId]: { ...prev[lessonId], ...newProgress }
-    }));
-  };
+  const flatLessons = modules.flatMap(m => m.lessons);
 
   if (loading) {
     return (
@@ -239,9 +243,6 @@ export default function LearnPage() {
     );
   }
 
-  // Flatten lessons for locking logic
-  const flatLessons = modules.flatMap(m => m.lessons);
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fff6f9] via-[#fdf2ee] to-[#fff0f4] relative overflow-hidden">
       <BackgroundBlobs section="mid" />
@@ -257,17 +258,13 @@ export default function LearnPage() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <CourseCompletionBar courseId={course.id} userId={user.id} />
-              {modules.map((mod, modIdx) => {
-                // Need global index for locking
-                let globalIdx = 0;
-                for (let i = 0; i < modIdx; i++) globalIdx += modules[i].lessons.length;
+              {modules.map((mod) => {
                 return (
                   <div key={mod.id}>
                     <h3 className="text-xs font-semibold text-brand-rose-600 uppercase tracking-wider mb-2">{mod.title}</h3>
                     <div className="space-y-1">
-                      {mod.lessons.map((lesson, lessonIdx) => {
-                        const currentGlobalIdx = globalIdx + lessonIdx;
-                        const locked = isLessonLocked(lesson, currentGlobalIdx, flatLessons);
+                      {mod.lessons.map((lesson) => {
+                        const locked = isLessonLocked(lesson, flatLessons, progressMap);
                         return (
                           <button
                             key={lesson.id}
@@ -317,12 +314,12 @@ export default function LearnPage() {
 
             <div className="flex-1 bg-black/5 relative overflow-hidden">
               {activeLesson ? (
-                <LessonPlayer
+                <LessonWorkspace
                   key={activeLesson.id}
                   lesson={activeLesson}
                   courseId={course.id}
                   userId={user.id}
-                  onProgressUpdate={handleProgressUpdate}
+                  onQuizTaken={() => loadProgress()}
                 />
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-400">
@@ -333,6 +330,12 @@ export default function LearnPage() {
           </div>
         </div>
       </PageTransition>
+
+      {/* ChatBubble */}
+      <ChatBubble />
+
+      {/* Call notification overlay */}
+      <CallNotification />
     </div>
   );
 }

@@ -6,7 +6,7 @@ import GlassCard from '@/shared/components/GlassCard';
 import { motion } from 'framer-motion';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Legend
+  BarChart, Bar
 } from 'recharts';
 
 export default function AdminDashboardPage() {
@@ -111,14 +111,14 @@ export default function AdminDashboardPage() {
           </div>
         ) : (
           <>
-            {/* Stat cards */}
+            {/* Stat cards – fixed missing key warning by using card.label as key */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              {statCards.map((card, i) => (
+              {statCards.map((card) => (
                 <motion.div
-                  key={card.label}
+                  key={card.label}    // ✅ unique key
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.1 }}
+                  transition={{ delay: statCards.indexOf(card) * 0.1 }}
                 >
                   <GlassCard className="p-6 relative overflow-hidden">
                     <div className="text-3xl mb-2">{card.icon}</div>
@@ -132,11 +132,11 @@ export default function AdminDashboardPage() {
               ))}
             </div>
 
-            {/* Revenue chart */}
+            {/* Revenue chart – fixed dimensions wrapper */}
             <GlassCard className="p-6 mb-8">
               <h3 className="font-display font-semibold text-xl mb-4">Revenue (Last 30 Days)</h3>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="w-full min-h-[300px]">
+                <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={revenueData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0e0e0" />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} />
@@ -149,11 +149,11 @@ export default function AdminDashboardPage() {
             </GlassCard>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-              {/* Top courses */}
+              {/* Top courses – fixed dimensions wrapper */}
               <GlassCard className="p-6">
                 <h3 className="font-display font-semibold text-xl mb-4">Top Courses by Revenue</h3>
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="w-full min-h-[300px]">
+                  <ResponsiveContainer width="100%" height={300}>
                     <BarChart data={topCourses} layout="vertical" margin={{ left: 40 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0e0e0" />
                       <XAxis type="number" tick={{ fontSize: 12 }} />
@@ -165,15 +165,17 @@ export default function AdminDashboardPage() {
                 </div>
               </GlassCard>
 
-              {/* Recent orders */}
+              {/* Recent orders – fixed missing key warning */}
               <GlassCard className="p-6">
                 <h3 className="font-display font-semibold text-xl mb-4">Recent Orders</h3>
                 <div className="space-y-3 max-h-64 overflow-y-auto">
                   {recentOrders.map((order) => (
-                    <div key={order.id} className="flex justify-between items-center text-sm">
+                    <div key={order.id} className="flex justify-between items-center text-sm">   {/* ✅ unique key */}
                       <div>
                         <p className="font-medium">{order.courses?.title || 'Course'}</p>
-                        <p className="text-gray-500 text-xs">{order.profiles?.full_name} – {new Date(order.created_at).toLocaleDateString()}</p>
+                        <p className="text-gray-500 text-xs">
+                          {order.profiles?.full_name} – {new Date(order.created_at).toLocaleDateString()}
+                        </p>
                       </div>
                       <p className="font-semibold text-brand-rose-600">${(order.amount_cents / 100).toFixed(2)}</p>
                     </div>

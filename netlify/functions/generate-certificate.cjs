@@ -1,10 +1,12 @@
-const PDFDocument = require('pdfkit');
 const { createClient } = require('@supabase/supabase-js');
+const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+const SITE_URL = process.env.SITE_URL || 'http://localhost:8888';
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
@@ -68,42 +70,132 @@ exports.handler = async (event) => {
       .eq('id', courseId)
       .single();
 
-    // 4. Generate PDF
-    const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: 50 });
-    const buffers = [];
-    doc.on('data', buffers.push.bind(buffers));
-    const pdfPromise = new Promise((resolve, reject) => {
-      doc.on('end', () => resolve(Buffer.concat(buffers)));
-      doc.on('error', reject);
+    // 4. Generate PDF using pdf-lib
+    const certCode = `LUM-${courseId.slice(0, 8)}-${user.id.slice(0, 8)}`.toUpperCase();
+    const today = new Date().toLocaleDateString('en-US', {
+      year: 'numeric', month: 'long', day: 'numeric',
+    });
+    const verifyUrl = `${SITE_URL}/verify/${certCode}`;
+
+    // Create PDF
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([792, 612]); // Letter landscape: 11in x 8.5in => 792x612 points
+    const width = page.getWidth();   // 792
+    const height = page.getHeight(); // 612
+
+    // Embed fonts
+    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const monoFont = await pdfDoc.embedFont(StandardFonts.Courier);
+
+    // Colors
+    const borderColor = rgb(200/255, 64/255, 112/255);
+    const lightBorderColor = rgb(232/255, 112/255, 144/255);
+    const titleColor = rgb(200/255, 64/255, 112/255);
+    const textDark = rgb(51/255, 51/255, 51/255);
+    const textLight = rgb(85/255, 85/255, 85/255);
+    const textCode = rgb(153/255, 153/255, 153/255);
+
+    // Borders – all coordinates are numbers now
+    page.drawRectangle({
+      x: 20,
+      y: 20,
+      width: width - 40,
+      height: height - 40,
+      borderColor: borderColor,
+      borderWidth: 2,
+    });
+    page.drawRectangle({
+      x: 25,
+      y: 25,
+      width: width - 50,
+      height: height - 50,
+      borderColor: lightBorderColor,
+      borderWidth: 1,
     });
 
-    // Beautiful certificate design
-    // Border
-    doc.rect(20, 20, doc.page.width - 40, doc.page.height - 40).stroke('#c84070');
-    doc.rect(25, 25, doc.page.width - 50, doc.page.height - 50).stroke('#e87090');
     // Title
-    doc.fontSize(40).fill('#c84070').text('Certificate of Completion', { align: 'center' });
-    doc.moveDown();
-    // Name
-    doc.fontSize(28).fill('#333').text(profile.full_name, { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(16).fill('#555').text('has successfully completed the', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(24).fill('#c84070').text(course.title, { align: 'center' });
-    doc.moveDown();
-    // Date
-    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-    doc.fontSize(14).fill('#555').text(`Issued on ${today}`, { align: 'center' });
-    doc.moveDown(2);
-    // Unique code
-    const certCode = `LUM-${courseId.slice(0,8)}-${user.id.slice(0,8)}`.toUpperCase();
-    doc.fontSize(10).fill('#999').text(`Certificate Code: ${certCode}`, { align: 'center' });
-    // Footer
-    doc.moveDown(2);
-    doc.fontSize(12).fill('#c84070').text('Lumière Beauty Academy', { align: 'center' });
+    page.drawText('Certificate of Completion', {
+      x: width / 2,
+      y: height - 100,
+      size: 40,
+      font: boldFont,
+      color: titleColor,
+      textAlign: 'center',
+    });
 
-    doc.end();
-    const pdfBuffer = await pdfPromise;
+    // Student name
+    page.drawText(profile.full_name, {
+      x: width / 2,
+      y: height - 180,
+      size: 28,
+      font: normalFont,
+      color: textDark,
+      textAlign: 'center',
+    });
+
+    // Subtitle
+    page.drawText('has successfully completed the', {
+      x: width / 2,
+      y: height - 220,
+      size: 16,
+      font: normalFont,
+      color: textLight,
+      textAlign: 'center',
+    });
+
+    // Course title
+    page.drawText(course.title, {
+      x: width / 2,
+      y: height - 270,
+      size: 24,
+      font: boldFont,
+      color: titleColor,
+      textAlign: 'center',
+    });
+
+    // Date
+    page.drawText(`Issued on ${today}`, {
+      x: width / 2,
+      y: height - 320,
+      size: 14,
+      font: normalFont,
+      color: textLight,
+      textAlign: 'center',
+    });
+
+    // Certificate code
+    page.drawText(`Certificate Code: ${certCode}`, {
+      x: width / 2,
+      y: height - 380,
+      size: 10,
+      font: monoFont,
+      color: textCode,
+      textAlign: 'center',
+    });
+
+    // Verification link
+    page.drawText(`Verify online: ${verifyUrl}`, {
+      x: width / 2,
+      y: height - 410,
+      size: 9,
+      font: monoFont,
+      color: textLight,
+      textAlign: 'center',
+      underline: true,
+    });
+
+    // Footer
+    page.drawText('Lumière Beauty Academy', {
+      x: width / 2,
+      y: 80,
+      size: 12,
+      font: boldFont,
+      color: titleColor,
+      textAlign: 'center',
+    });
+
+    const pdfBuffer = await pdfDoc.save();
 
     // 5. Upload to Supabase Storage
     const filename = `certificates/${certCode}.pdf`;
@@ -115,7 +207,6 @@ exports.handler = async (event) => {
       });
     if (uploadError) throw new Error('Failed to upload certificate: ' + uploadError.message);
 
-    // Get public URL (signed URL would be better, but for MVP we can use public bucket)
     const { data: { publicUrl } } = supabase.storage
       .from('certificates')
       .getPublicUrl(filename);

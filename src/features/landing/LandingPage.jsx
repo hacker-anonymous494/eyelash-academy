@@ -1116,17 +1116,13 @@ function Footer() {
 export default function LandingPage() {
   return (
     <>
-      <GlobalStyles />
-      <Navbar />
-      <main>
-        <Hero />
-        <Curriculum />
-        <Testimonials />
-        <Certificates />
-        <Instructor />
-        <Pricing />
-        <FAQ />
-      </main>
+      <Hero />
+      <Curriculum />
+      <Testimonials />
+      <Certificates />
+      <Instructor />
+      <Pricing />
+      <FAQ />
       <Footer />
     </>
   );

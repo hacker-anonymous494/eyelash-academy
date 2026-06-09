@@ -5,11 +5,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import GlassCard from '@/shared/components/GlassCard';
 import GradientText from '@/shared/components/GradientText';
 import PrimaryButton from '@/shared/components/PrimaryButton';
-import GhostButton from '@/shared/components/GhostButton';
+// GhostButton no longer needed (we only use PrimaryButton)
 import PageTransition from '@/shared/components/PageTransition';
 import Input from '@/shared/components/Input';
 import { useSignIn } from '../hooks/useSignIn';
-import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
+// BackgroundBlobs is removed – PublicLayout handles it
 
 const schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -27,16 +27,18 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-[#fff6f9] via-[#fdf2ee] to-[#fff0f4]">
-      <BackgroundBlobs section="hero" />
-
-      <PageTransition>
-        <GlassCard className="w-full max-w-md mx-4 p-8 relative z-10">
+    <PageTransition>
+      {/* Centered container with enough height to look good inside PublicLayout */}
+      <div className="flex items-center justify-center min-h-[80vh] px-4">
+        <GlassCard className="w-full max-w-md p-8">
           {/* Logo */}
           <div className="flex justify-center mb-8">
             <div className="flex items-center gap-2">
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-rose-600 to-brand-rose-400 flex items-center justify-center shadow-lg shadow-brand-rose-600/30">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M12 2C8 2 5 5 5 9c0 2.5 1.2 4.7 3 6l-1 4h10l-1-4c1.8-1.3 3-3.5 3-6 0-4-3-7-7-7z" fill="white" fillOpacity="0.9"/><circle cx="12" cy="9" r="2.5" fill="white" fillOpacity="0.6"/></svg>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                  <path d="M12 2C8 2 5 5 5 9c0 2.5 1.2 4.7 3 6l-1 4h10l-1-4c1.8-1.3 3-3.5 3-6 0-4-3-7-7-7z" fill="white" fillOpacity="0.9"/>
+                  <circle cx="12" cy="9" r="2.5" fill="white" fillOpacity="0.6"/>
+                </svg>
               </div>
               <div>
                 <div className="font-display text-lg font-semibold leading-none">Lumière</div>
@@ -88,7 +90,7 @@ export default function LoginPage() {
             </Link>
           </div>
         </GlassCard>
-      </PageTransition>
-    </div>
+      </div>
+    </PageTransition>
   );
 }

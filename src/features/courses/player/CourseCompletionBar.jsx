@@ -1,96 +1,128 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '@/config/supabase';
-import PrimaryButton from '@/shared/components/PrimaryButton';
-import { motion } from 'framer-motion';
+function CourseCompletionBar({ courseId, userId }) {
+  const [progressData, setProgressData] = useState({
+    completedLessons: 0,
+    totalLessons: 0,
+    allCompleted: false,
+  });
+  const [certificateUrl, setCertificateUrl] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-export default function CourseCompletionBar({ courseId, userId }) {
-  const [allCompleted, setAllCompleted] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [certUrl, setCertUrl] = useState(null);
-  const [genLoading, setGenLoading] = useState(false);
-
+  // Fetch completion status and any existing certificate
   useEffect(() => {
-    async function check() {
+    async function fetchData() {
+      // Get modules → lessons
       const { data: modules } = await supabase
         .from('modules')
         .select('id')
         .eq('course_id', courseId);
-      if (!modules) return;
+      if (!modules || modules.length === 0) return;
+
       const moduleIds = modules.map(m => m.id);
       const { data: lessons } = await supabase
         .from('lessons')
         .select('id')
         .in('module_id', moduleIds);
+      if (!lessons) return;
+
+      const totalLessons = lessons.length;
       const lessonIds = lessons.map(l => l.id);
 
-      const { data: progress } = await supabase
+      // Progress
+      const { data: completed } = await supabase
         .from('lesson_progress')
-        .select('completed')
+        .select('lesson_id')
         .eq('student_id', userId)
-        .in('lesson_id', lessonIds);
+        .in('lesson_id', lessonIds)
+        .eq('completed', true);
 
-      const allDone = progress.length === lessonIds.length && progress.every(p => p.completed);
-      setAllCompleted(allDone);
+      const completedCount = completed?.length || 0;
+      const allCompleted = completedCount === totalLessons && totalLessons > 0;
 
-      // Check if certificate already exists
-      if (allDone) {
+      setProgressData({
+        completedLessons: completedCount,
+        totalLessons,
+        allCompleted,
+      });
+
+      // Check if certificate already issued
+      if (allCompleted) {
         const { data: cert } = await supabase
           .from('certificates')
           .select('certificate_url')
           .eq('student_id', userId)
           .eq('course_id', courseId)
           .maybeSingle();
-        if (cert) setCertUrl(cert.certificate_url);
+        if (cert) setCertificateUrl(cert.certificate_url);
       }
-      setLoading(false);
     }
-    check();
+    fetchData();
   }, [courseId, userId]);
 
-  const handleGenerate = async () => {
-    setGenLoading(true);
-    const { data: { session } } = await supabase.auth.getSession();
-    const res = await fetch('/.netlify/functions/generate-certificate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ courseId }),
-    });
-    if (res.ok) {
-      const { url } = await res.json();
-      setCertUrl(url);
-    } else {
-      const err = await res.json();
-      console.error(err.error);
+  const handleClaimCertificate = async () => {
+    if (loading || certificateUrl) return;
+    setLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch('/.netlify/functions/generate-certificate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ courseId }),
+      });
+      if (response.ok) {
+        const { url } = await response.json();
+        setCertificateUrl(url);
+      }
+    } catch (err) {
+      console.error('Failed to generate certificate:', err);
+    } finally {
+      setLoading(false);
     }
-    setGenLoading(false);
   };
 
-  if (loading) return null;
+  if (!progressData.totalLessons) return null;
 
-  if (allCompleted && certUrl) {
-    return (
-      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="bg-green-50 border border-green-200 p-4 rounded-xl text-center">
-        <p className="text-green-700 font-semibold mb-2">🎉 Congratulations! You've completed the course!</p>
-        <a href={certUrl} target="_blank" rel="noopener noreferrer" className="text-brand-rose-600 underline">
-          Download Certificate
-        </a>
-      </motion.div>
-    );
-  }
+  const percent = (progressData.completedLessons / progressData.totalLessons) * 100;
 
-  if (allCompleted && !certUrl) {
-    return (
-      <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="bg-yellow-50 border border-yellow-200 p-4 rounded-xl text-center">
-        <p className="text-yellow-700 font-semibold mb-2">All lessons completed!</p>
-        <PrimaryButton onClick={handleGenerate} loading={genLoading} className="mx-auto">
-          Claim Your Certificate
-        </PrimaryButton>
-      </motion.div>
-    );
-  }
+  return (
+    <div className="mt-4 p-3 bg-white/50 rounded-xl border border-brand-rose-200/40">
+      <div className="flex justify-between text-xs text-gray-600 mb-1">
+        <span>Course progress</span>
+        <span>
+          {progressData.completedLessons} / {progressData.totalLessons} lessons
+        </span>
+      </div>
+      <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-brand-rose-500 rounded-full transition-all"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
 
-  return null;
+      {progressData.allCompleted && (
+        <div className="mt-3 text-center">
+          {certificateUrl ? (
+            <a
+              href={certificateUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-sm bg-green-600 text-white px-3 py-1.5 rounded-full hover:bg-green-700 transition"
+            >
+              🎓 View Certificate
+            </a>
+          ) : (
+            <button
+              onClick={handleClaimCertificate}
+              disabled={loading}
+              className="text-sm bg-brand-rose-600 text-white px-3 py-1.5 rounded-full hover:bg-brand-rose-700 transition disabled:opacity-50"
+            >
+              {loading ? 'Generating...' : '🏆 Claim Certificate'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
