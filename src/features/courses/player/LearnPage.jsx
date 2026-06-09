@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase } from '@/config/supabase';
+import { sendNotification } from '@/lib/notifications';
 import GlassCard from '@/shared/components/GlassCard';
 import PageTransition from '@/shared/components/PageTransition';
 import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
@@ -127,8 +128,45 @@ export default function LearnPage() {
   const [loading, setLoading] = useState(true);
   const [progressMap, setProgressMap] = useState({});
 
-  // Call notifications hook
+  // Call notifications (polling fallback)
   useCallNotifications();
+
+  // Real‑time subscription for call invites
+  const channelRef = useRef(null);
+  const subscribedRef = useRef(false);
+
+  useEffect(() => {
+    if (!user || subscribedRef.current) return;
+
+    const channel = supabase
+      .channel(`call_${user.id}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'video_call_sessions',
+        filter: `student_id=eq.${user.id}`,
+      }, (payload) => {
+        const session = payload.new;
+        if (session.room_ready && !session.joined_by?.includes(user.id)) {
+          sendNotification('Your call is starting!', {
+            body: 'The instructor is waiting. Click to join.',
+          });
+          window.dispatchEvent(new CustomEvent('call:invite', {
+            detail: { sessionId: session.id },
+          }));
+        }
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') subscribedRef.current = true;
+      });
+
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      subscribedRef.current = false;
+    };
+  }, [user?.id]);
 
   // Fetch course, modules, enrollment
   useEffect(() => {
@@ -211,6 +249,7 @@ export default function LearnPage() {
     }
   }, [modules, progressMap, activeLesson]);
 
+  // Helper to determine if a lesson is locked
   const isLessonLocked = (lesson, flatLessons, progressMap) => {
     const index = flatLessons.findIndex(l => l.id === lesson.id);
     if (index <= 0) return false;
