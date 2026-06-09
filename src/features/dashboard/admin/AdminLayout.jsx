@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useSignOut } from '@/features/auth/hooks/useSignOut';
+import { useAdminNotifications } from '@/features/calls/useAdminNotifications';
 
 const navItems = [
   { to: '/admin', label: 'Overview', icon: '📊' },
@@ -11,6 +12,7 @@ const navItems = [
 ];
 
 export default function AdminLayout({ children }) {
+  useAdminNotifications();
   const location = useLocation();
   const { signOut } = useSignOut();
 
