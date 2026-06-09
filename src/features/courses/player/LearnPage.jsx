@@ -11,7 +11,7 @@ import ChatBubble from '@/features/chat/ChatBubble';
 import { useCallNotifications } from '@/features/calls/useCallNotifications';
 import CallNotification from '@/features/calls/CallNotification';
 
-// Completion bar component (shows progress and manual certificate button)
+// Completion bar component
 function CourseCompletionBar({ courseId, userId }) {
   const [progressData, setProgressData] = useState({ completedLessons: 0, totalLessons: 0, allCompleted: false });
   const [certificateUrl, setCertificateUrl] = useState(null);
@@ -128,10 +128,9 @@ export default function LearnPage() {
   const [loading, setLoading] = useState(true);
   const [progressMap, setProgressMap] = useState({});
 
-  // Call notifications (polling fallback)
-  useCallNotifications();
+  useCallNotifications(); // optional polling fallback
 
-  // Real‑time subscription for call invites
+  // Real‑time call notification listener
   const channelRef = useRef(null);
   const subscribedRef = useRef(false);
 
@@ -139,7 +138,7 @@ export default function LearnPage() {
     if (!user || subscribedRef.current) return;
 
     const channel = supabase
-      .channel(`call_${user.id}`)
+      .channel(`call_notify_${user.id}`)
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
@@ -249,7 +248,6 @@ export default function LearnPage() {
     }
   }, [modules, progressMap, activeLesson]);
 
-  // Helper to determine if a lesson is locked
   const isLessonLocked = (lesson, flatLessons, progressMap) => {
     const index = flatLessons.findIndex(l => l.id === lesson.id);
     if (index <= 0) return false;
@@ -297,40 +295,38 @@ export default function LearnPage() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <CourseCompletionBar courseId={course.id} userId={user.id} />
-              {modules.map((mod) => {
-                return (
-                  <div key={mod.id}>
-                    <h3 className="text-xs font-semibold text-brand-rose-600 uppercase tracking-wider mb-2">{mod.title}</h3>
-                    <div className="space-y-1">
-                      {mod.lessons.map((lesson) => {
-                        const locked = isLessonLocked(lesson, flatLessons, progressMap);
-                        return (
-                          <button
-                            key={lesson.id}
-                            onClick={() => !locked && setActiveLesson(lesson)}
-                            disabled={locked}
-                            className={`w-full text-left p-3 rounded-xl transition-all flex items-center gap-3 text-sm ${
-                              activeLesson?.id === lesson.id
-                                ? 'bg-brand-rose-100 border border-brand-rose-300 text-brand-rose-800'
-                                : locked
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                : 'hover:bg-white/50 border border-transparent'
-                            }`}
-                          >
-                            <span className="w-6 h-6 rounded-full bg-brand-rose-100 flex items-center justify-center text-xs">
-                              {locked ? '🔒' : (lesson.free_preview ? '🎥' : '📘')}
-                            </span>
-                            <span className="flex-1 truncate">{lesson.title}</span>
-                            {progressMap[lesson.id]?.passed_quiz && (
-                              <span className="text-green-600 text-xs">✅</span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+              {modules.map((mod) => (
+                <div key={mod.id}>
+                  <h3 className="text-xs font-semibold text-brand-rose-600 uppercase tracking-wider mb-2">{mod.title}</h3>
+                  <div className="space-y-1">
+                    {mod.lessons.map((lesson) => {
+                      const locked = isLessonLocked(lesson, flatLessons, progressMap);
+                      return (
+                        <button
+                          key={lesson.id}
+                          onClick={() => !locked && setActiveLesson(lesson)}
+                          disabled={locked}
+                          className={`w-full text-left p-3 rounded-xl transition-all flex items-center gap-3 text-sm ${
+                            activeLesson?.id === lesson.id
+                              ? 'bg-brand-rose-100 border border-brand-rose-300 text-brand-rose-800'
+                              : locked
+                              ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              : 'hover:bg-white/50 border border-transparent'
+                          }`}
+                        >
+                          <span className="w-6 h-6 rounded-full bg-brand-rose-100 flex items-center justify-center text-xs">
+                            {locked ? '🔒' : (lesson.free_preview ? '🎥' : '📘')}
+                          </span>
+                          <span className="flex-1 truncate">{lesson.title}</span>
+                          {progressMap[lesson.id]?.passed_quiz && (
+                            <span className="text-green-600 text-xs">✅</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -370,10 +366,7 @@ export default function LearnPage() {
         </div>
       </PageTransition>
 
-      {/* ChatBubble */}
       <ChatBubble />
-
-      {/* Call notification overlay */}
       <CallNotification />
     </div>
   );

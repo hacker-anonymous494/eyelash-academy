@@ -16,17 +16,17 @@ import CallNotification from '@/features/calls/CallNotification';
 export default function DashboardPage() {
   const { user, profile } = useAuth();
   const { signOut } = useSignOut();
-  useCallNotifications(); // 👈 initialize call notification polling (optional)
+  useCallNotifications(); // optional polling fallback
 
+  // Real‑time call notification listener
   const channelRef = useRef(null);
   const subscribedRef = useRef(false);
 
-  // Real‑time subscription for call invites
   useEffect(() => {
     if (!user || subscribedRef.current) return;
 
     const channel = supabase
-      .channel(`call_${user.id}`)
+      .channel(`call_notify_${user.id}`)
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
@@ -127,6 +127,7 @@ export default function DashboardPage() {
                 </div>
               </GlassCard>
             </Link>
+
             <Link to="/dashboard/calls">
               <GlassCard className="card-hover cursor-pointer flex items-center gap-4 p-6">
                 <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
