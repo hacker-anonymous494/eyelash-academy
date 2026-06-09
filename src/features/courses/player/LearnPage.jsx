@@ -8,10 +8,9 @@ import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import LessonWorkspace from './LessonWorkspace';
 import ChatBubble from '@/features/chat/ChatBubble';
-import { useCallNotifications } from '@/features/calls/useCallNotifications';
 import CallNotification from '@/features/calls/CallNotification';
 
-// Completion bar component
+// Completion bar component (shows progress and manual certificate button)
 function CourseCompletionBar({ courseId, userId }) {
   const [progressData, setProgressData] = useState({ completedLessons: 0, totalLessons: 0, allCompleted: false });
   const [certificateUrl, setCertificateUrl] = useState(null);
@@ -127,18 +126,15 @@ export default function LearnPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [progressMap, setProgressMap] = useState({});
+  const listenerRef = useRef(false);
 
-  useCallNotifications(); // optional polling fallback
-
-  // Real‑time call notification listener
-  const channelRef = useRef(null);
-  const subscribedRef = useRef(false);
-
+  // Student listener for call invites
   useEffect(() => {
-    if (!user || subscribedRef.current) return;
+    if (!user || listenerRef.current) return;
+    listenerRef.current = true;
 
     const channel = supabase
-      .channel(`call_notify_${user.id}`)
+      .channel(`call_${user.id}`)
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
@@ -146,24 +142,21 @@ export default function LearnPage() {
         filter: `student_id=eq.${user.id}`,
       }, (payload) => {
         const session = payload.new;
+        console.log('📞 Student listener fired:', session.room_ready, session.joined_by);
         if (session.room_ready && !session.joined_by?.includes(user.id)) {
           sendNotification('Your call is starting!', {
-            body: 'The instructor is waiting. Click to join.',
+            body: 'Instructor is waiting.',
           });
           window.dispatchEvent(new CustomEvent('call:invite', {
             detail: { sessionId: session.id },
           }));
         }
       })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') subscribedRef.current = true;
-      });
-
-    channelRef.current = channel;
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
-      subscribedRef.current = false;
+      listenerRef.current = false;
     };
   }, [user?.id]);
 

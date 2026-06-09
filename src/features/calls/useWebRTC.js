@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import { supabase } from '@/config/supabase';
 
 export function useWebRTC(sessionId, userId) {
@@ -8,36 +8,27 @@ export function useWebRTC(sessionId, userId) {
   const [error, setError] = useState(null);
   const peerRef = useRef(null);
   const channelRef = useRef(null);
-  const offererRef = useRef(false);
+  const streamRef = useRef(null);
 
   const sendSignal = useCallback((data) => {
-    if (channelRef.current) {
-      channelRef.current.send({ type: 'broadcast', event: 'signal', payload: data });
-    }
+    channelRef.current?.send({ type: 'broadcast', event: 'signal', payload: data });
   }, []);
 
-  useEffect(() => {
-    if (!sessionId || !userId) return;
-    const channel = supabase.channel(`webrtc_${sessionId}`);
-    channelRef.current = channel;
-    channel.on('broadcast', { event: 'signal' }, (payload) => {
-      handleSignal(payload.payload);
-    }).subscribe();
-    return () => { supabase.removeChannel(channel); channelRef.current = null; };
-  }, [sessionId, userId]);
-
-  const createPeer = async (asOfferer) => {
-    let stream = null;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    } catch (err) {
-      setError('Camera/microphone access denied. Please allow and try again.');
-      setStatus('idle');
-      return;
+  const createPeer = useCallback(async (asOfferer) => {
+    setError(null);
+    // Get media if not already
+    if (!streamRef.current) {
+      try {
+        streamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        setLocalStream(streamRef.current);
+      } catch (err) {
+        setError('Camera/microphone access denied. Allow permissions and try again.');
+        setStatus('idle');
+        return false;
+      }
     }
-    setLocalStream(stream);
     const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-    stream.getTracks().forEach(t => peer.addTrack(t, stream));
+    streamRef.current.getTracks().forEach(t => peer.addTrack(t, streamRef.current));
     peer.onicecandidate = (e) => { if (e.candidate) sendSignal({ type: 'ice', candidate: e.candidate.toJSON() }); };
     peer.ontrack = (e) => { setRemoteStream(e.streams[0]); setStatus('connected'); };
     peer.oniceconnectionstatechange = () => {
@@ -45,14 +36,14 @@ export function useWebRTC(sessionId, userId) {
     };
     peerRef.current = peer;
     if (asOfferer) {
-      offererRef.current = true;
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       sendSignal({ type: 'offer', sdp: peer.localDescription });
     }
-  };
+    return true;
+  }, [sendSignal]);
 
-  const handleSignal = async (data) => {
+  const handleSignal = useCallback(async (data) => {
     if (!peerRef.current) {
       if (data.type === 'offer') await createPeer(false);
       else return;
@@ -70,11 +61,19 @@ export function useWebRTC(sessionId, userId) {
         await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
       }
     } catch (e) { console.error(e); }
-  };
+  }, [createPeer, sendSignal]);
+
+  // Subscribe to signaling channel once
+  const subscribe = useCallback(() => {
+    const channel = supabase.channel(`webrtc_${sessionId}`);
+    channel.on('broadcast', { event: 'signal' }, (payload) => handleSignal(payload.payload)).subscribe();
+    channelRef.current = channel;
+  }, [sessionId, handleSignal]);
 
   const startCall = useCallback(async () => {
-    setError(null);
+    if (status === 'calling' || status === 'connected') return;
     setStatus('calling');
+    if (!channelRef.current) subscribe();
     const { data: session } = await supabase.from('video_call_sessions').select('offerer_id').eq('id', sessionId).single();
     if (!session) return;
     if (!session.offerer_id) {
@@ -83,14 +82,17 @@ export function useWebRTC(sessionId, userId) {
     } else {
       await createPeer(false);
     }
-  }, [sessionId, userId]);
+  }, [sessionId, userId, status, createPeer, subscribe]);
 
   const endCall = useCallback(() => {
-    if (peerRef.current) { peerRef.current.close(); peerRef.current = null; }
-    if (localStream) { localStream.getTracks().forEach(t => t.stop()); setLocalStream(null); }
+    peerRef.current?.close();
+    peerRef.current = null;
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setLocalStream(null);
     setRemoteStream(null);
     setStatus('idle');
-  }, [localStream]);
+  }, []);
 
   return { localStream, remoteStream, status, error, startCall, endCall };
 }

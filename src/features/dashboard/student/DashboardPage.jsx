@@ -10,23 +10,20 @@ import GradientText from '@/shared/components/GradientText';
 import PageTransition from '@/shared/components/PageTransition';
 import BackgroundBlobs from '@/shared/components/BackgroundBlobs';
 import ChatBubble from '@/features/chat/ChatBubble';
-import { useCallNotifications } from '@/features/calls/useCallNotifications';
 import CallNotification from '@/features/calls/CallNotification';
 
 export default function DashboardPage() {
   const { user, profile } = useAuth();
   const { signOut } = useSignOut();
-  useCallNotifications(); // optional polling fallback
+  const listenerRef = useRef(false);
 
-  // Real‑time call notification listener
-  const channelRef = useRef(null);
-  const subscribedRef = useRef(false);
-
+  // Student listener for call invites
   useEffect(() => {
-    if (!user || subscribedRef.current) return;
+    if (!user || listenerRef.current) return;
+    listenerRef.current = true;
 
     const channel = supabase
-      .channel(`call_notify_${user.id}`)
+      .channel(`call_${user.id}`)
       .on('postgres_changes', {
         event: 'UPDATE',
         schema: 'public',
@@ -34,24 +31,21 @@ export default function DashboardPage() {
         filter: `student_id=eq.${user.id}`,
       }, (payload) => {
         const session = payload.new;
+        console.log('📞 Student listener fired:', session.room_ready, session.joined_by);
         if (session.room_ready && !session.joined_by?.includes(user.id)) {
           sendNotification('Your call is starting!', {
-            body: 'The instructor is waiting. Click to join.',
+            body: 'Instructor is waiting.',
           });
           window.dispatchEvent(new CustomEvent('call:invite', {
             detail: { sessionId: session.id },
           }));
         }
       })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') subscribedRef.current = true;
-      });
-
-    channelRef.current = channel;
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
-      subscribedRef.current = false;
+      listenerRef.current = false;
     };
   }, [user?.id]);
 
@@ -72,10 +66,7 @@ export default function DashboardPage() {
               </motion.h1>
               <p className="text-brand-rose-600/70 mt-1">Continue your lash mastery journey</p>
             </div>
-            <button
-              onClick={signOut}
-              className="btn-ghost text-sm"
-            >
+            <button onClick={signOut} className="btn-ghost text-sm">
               Sign Out
             </button>
           </div>
@@ -84,9 +75,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             <Link to="/dashboard/courses">
               <GlassCard className="card-hover cursor-pointer flex items-center gap-4 p-6">
-                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
-                  📚
-                </div>
+                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">📚</div>
                 <div>
                   <h3 className="font-semibold text-lg">My Courses</h3>
                   <p className="text-sm text-brand-rose-600/60">Continue learning</p>
@@ -96,9 +85,7 @@ export default function DashboardPage() {
 
             <Link to="/dashboard/certificates">
               <GlassCard className="card-hover flex items-center gap-4 p-6 cursor-pointer">
-                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
-                  📜
-                </div>
+                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">📜</div>
                 <div>
                   <h3 className="font-semibold text-lg">Certificates</h3>
                   <p className="text-sm text-brand-rose-600/60">Your achievements</p>
@@ -107,9 +94,7 @@ export default function DashboardPage() {
             </Link>
 
             <GlassCard className="card-hover flex items-center gap-4 p-6">
-              <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
-                💬
-              </div>
+              <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">💬</div>
               <div>
                 <h3 className="font-semibold text-lg">Support</h3>
                 <p className="text-sm text-brand-rose-600/60">Chat with mentors</p>
@@ -118,9 +103,7 @@ export default function DashboardPage() {
 
             <Link to="/dashboard/book-call">
               <GlassCard className="card-hover cursor-pointer flex items-center gap-4 p-6">
-                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
-                  📞
-                </div>
+                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">📞</div>
                 <div>
                   <h3 className="font-semibold text-lg">Book a 1‑on‑1 Call</h3>
                   <p className="text-sm text-brand-rose-600/60">Schedule a mentoring session</p>
@@ -130,9 +113,7 @@ export default function DashboardPage() {
 
             <Link to="/dashboard/calls">
               <GlassCard className="card-hover cursor-pointer flex items-center gap-4 p-6">
-                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">
-                  📞
-                </div>
+                <div className="w-12 h-12 rounded-xl bg-brand-rose-100 flex items-center justify-center text-2xl">📞</div>
                 <div>
                   <h3 className="font-semibold text-lg">My Calls</h3>
                   <p className="text-sm text-brand-rose-600/60">View scheduled sessions</p>
@@ -143,10 +124,7 @@ export default function DashboardPage() {
         </div>
       </PageTransition>
 
-      {/* ChatBubble */}
       <ChatBubble />
-
-      {/* Call notification overlay */}
       <CallNotification />
     </div>
   );
