@@ -520,25 +520,7 @@ export default function LearnPage() {
   const lessonIdKey = flatLessons.map(l => l.id).join(',');
 
   // ── Realtime call listener ──────────────────────────────────────────────
-  useEffect(() => {
-    if (!user) return;
-    const channel = supabase
-      .channel(`call_${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'video_call_sessions', filter: `student_id=eq.${user.id}` },
-        (payload) => {
-          const session = payload.new;
-          if (session.room_ready) {
-            sendNotification('Your call is starting!', { body: 'Instructor is waiting.' });
-            window.dispatchEvent(new CustomEvent('call:invite', { detail: { sessionId: session.id } }));
-          }
-        }
-      )
-      .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, [user?.id]);
 
   // ── Fetch course + modules + enrollment ─────────────────────────────────
   useEffect(() => {

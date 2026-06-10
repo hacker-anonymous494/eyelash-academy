@@ -1,279 +1,597 @@
-import { useState, useEffect } from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useSignOut } from '@/features/auth/hooks/useSignOut';
 import ChatBubble from '@/features/chat/ChatBubble';
 import CallToast from '@/features/calls/CallToast';
-import { useCallNotifications } from '@/features/calls/useCallNotifications';
+import { S, globalCSS } from '@/features/dashboard/student/dashboardShared.jsx';
+import { supabase } from '@/config/supabase';
+import { sendNotification } from '@/lib/notifications';
+import { activeCallChannels } from '@/shared/components/callChannelGuard';  // adjust path if you created it elsewhere
 
-// ─── Design tokens (same dark theme as LearnPage) ────────────────────────
-const S = {
-  sidebarBg: '#0f0a10',
-  sidebarBorder: 'rgba(232,112,144,0.18)',
-  sidebarText: 'rgba(255,240,245,0.85)',
-  sidebarMuted: 'rgba(255,180,210,0.45)',
-  sidebarHover: 'rgba(255,255,255,0.05)',
-  sidebarActive: 'rgba(232,112,144,0.14)',
-  sidebarActiveRail: '#e87090',
-  canvasBg: '#faf8f7',
+// ─── Module‑level guard – prevents duplicate realtime subscriptions ────────
+const activeCallListeners = new Set();
+
+// ─── Sidebar design tokens ────────────────────────────────────────────────────
+const SB = {
+  bg: '#0f0a10',
+  border: 'rgba(232,112,144,0.15)',
+  text: 'rgba(255,240,245,0.82)',
+  muted: 'rgba(255,180,210,0.42)',
+  hover: 'rgba(255,255,255,0.05)',
+  active: 'rgba(232,112,144,0.13)',
+  activeRail: '#e87090',
+  width: 240,
 };
 
-// ─── Icons (compact SVGs) ────────────────────────────────────────────────
-const Icons = {
-  dashboard: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
-  courses: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
-  certificates: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>,
-  calls: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
-  settings: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
-  logout: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
-  hamburger: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>,
+// ─── Icons (unchanged) ──────────────────────────────────────────────────────
+const Icon = {
+  overview: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/>
+      <rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>
+    </svg>
+  ),
+  courses: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+    </svg>
+  ),
+  certs: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="12" cy="8" r="5"/><path d="M9 14.5l-1.5 7L12 20l4.5 1.5L15 14.5"/>
+    </svg>
+  ),
+  calls: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M15.05 5A5 5 0 0 1 19 8.95M15.05 1A9 9 0 0 1 23 8.94m-1 7.98v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.8 12.8 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.8 12.8 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+    </svg>
+  ),
+  settings: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  ),
+  signout: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+  ),
+  menu: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  ),
+  bell: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+    </svg>
+  ),
+  chevronDown: (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+      <path d="M6 9l6 6 6-6"/>
+    </svg>
+  ),
+  explore: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+  ),
 };
 
-// ─── NavItem ──────────────────────────────────────────────────────────────
-function NavItem({ icon, label, to, active, onClick }) {
+// ─── Nav item ─────────────────────────────────────────────────────────────────
+function NavItem({ icon, label, to, active, badge, onClick }) {
   return (
-    <Link to={to} style={{ textDecoration: 'none' }} onClick={onClick}>
+    <Link to={to} style={{ textDecoration: 'none', display: 'block' }} onClick={onClick}>
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          borderRadius: 6,
-          marginBottom: 2,
-          cursor: 'pointer',
-          background: active ? S.sidebarActive : 'transparent',
-          color: active ? 'rgba(255,240,245,0.95)' : S.sidebarText,
-          transition: 'background 0.15s',
-          position: 'relative',
+          display: 'flex', alignItems: 'center', gap: 9,
+          padding: '9px 12px', borderRadius: 8, marginBottom: 2,
+          cursor: 'pointer', position: 'relative',
+          background: active ? SB.active : 'transparent',
+          color: active ? 'rgba(255,240,245,0.97)' : SB.text,
+          transition: 'background 0.15s, color 0.15s',
         }}
-        onMouseEnter={e => { if (!active) e.currentTarget.style.background = S.sidebarHover; }}
+        onMouseEnter={e => { if (!active) e.currentTarget.style.background = SB.hover; }}
         onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
       >
         {active && (
           <span style={{
-            position: 'absolute', left: 0, top: '25%', bottom: '25%',
-            width: 3, borderRadius: 2, background: S.sidebarActiveRail,
+            position: 'absolute', left: 0, top: '20%', bottom: '20%',
+            width: 3, borderRadius: 2, background: SB.activeRail,
           }} />
         )}
-        <span style={{ opacity: active ? 1 : 0.7 }}>{icon}</span>
-        <span style={{ fontFamily: "'DM Sans', system-ui, sans-serif", fontSize: 13, fontWeight: active ? 500 : 400 }}>
+        <span style={{ opacity: active ? 1 : 0.65, display: 'flex', flexShrink: 0 }}>{icon}</span>
+        <span style={{ fontFamily: S.fontBody, fontSize: 13.5, fontWeight: active ? 500 : 400, flex: 1 }}>
           {label}
         </span>
+        {badge != null && badge > 0 && (
+          <span style={{
+            background: SB.activeRail, color: 'white',
+            fontFamily: S.fontBody, fontSize: 10, fontWeight: 700,
+            borderRadius: 100, padding: '1px 6px', minWidth: 18, textAlign: 'center',
+          }}>
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
       </div>
     </Link>
   );
 }
 
-// ─── StudentLayout ────────────────────────────────────────────────────────
+// ─── Section divider ──────────────────────────────────────────────────────────
+function NavDivider({ label }) {
+  return (
+    <div style={{
+      padding: '12px 12px 5px',
+      fontFamily: S.fontBody, fontSize: 10, fontWeight: 700,
+      color: SB.muted, letterSpacing: '0.12em', textTransform: 'uppercase',
+    }}>
+      {label}
+    </div>
+  );
+}
+
+// ─── Avatar initials ──────────────────────────────────────────────────────────
+function Avatar({ name, size = 32, url }) {
+  const initials = name
+    ? name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()
+    : '?';
+  return url ? (
+    <img src={url} alt={name} style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+  ) : (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', flexShrink: 0,
+      background: 'linear-gradient(135deg, #c84070, #f07090)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: S.fontBody, fontSize: size * 0.36, fontWeight: 600,
+      color: 'white', userSelect: 'none',
+    }}>
+      {initials}
+    </div>
+  );
+}
+
+// ─── Topbar (mobile) ──────────────────────────────────────────────────────────
+function MobileTopbar({ onOpenSidebar, profile, user }) {
+  return (
+    <div style={{
+      height: 56, display: 'flex', alignItems: 'center', gap: 12,
+      padding: '0 16px',
+      background: 'rgba(250,248,247,0.94)',
+      backdropFilter: 'blur(16px)',
+      borderBottom: '1px solid rgba(200,64,112,0.1)',
+      position: 'sticky', top: 0, zIndex: 30,
+    }}>
+      <button
+        onClick={onOpenSidebar}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: S.rose, padding: 4, display: 'flex',
+        }}
+      >
+        {Icon.menu}
+      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+        <div style={{
+          width: 22, height: 22, borderRadius: 6,
+          background: 'linear-gradient(135deg,#c84070,#f07090)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.85)' }} />
+        </div>
+        <span style={{ fontFamily: S.fontDisplay, fontSize: 16, color: S.rose, fontWeight: 600 }}>Lumière</span>
+      </div>
+      <Avatar name={profile?.full_name || user?.email} size={30} url={profile?.avatar_url} />
+    </div>
+  );
+}
+
+// ─── Avatar dropdown ──────────────────────────────────────────────────────────
+function AvatarDropdown({ profile, user, signOut }) {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const fn = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', fn);
+    return () => document.removeEventListener('mousedown', fn);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+          background: open ? 'rgba(255,255,255,0.08)' : 'transparent',
+          border: 'none', borderRadius: 10, padding: '5px 8px 5px 5px',
+          transition: 'background 0.15s', width: '100%',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.07)'}
+        onMouseLeave={e => { if (!open) e.currentTarget.style.background = 'transparent'; }}
+      >
+        <Avatar name={profile?.full_name || user?.email} size={30} url={profile?.avatar_url} />
+        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+          <p style={{ fontFamily: S.fontBody, fontSize: 12, fontWeight: 500, color: SB.text, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {profile?.full_name || 'Student'}
+          </p>
+          <p style={{ fontFamily: S.fontBody, fontSize: 10, color: SB.muted, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user?.email}
+          </p>
+        </div>
+        <span style={{ color: SB.muted, opacity: 0.7, flexShrink: 0 }}>{Icon.chevronDown}</span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -6, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.96 }}
+            transition={{ duration: 0.18 }}
+            style={{
+              position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, right: 0,
+              background: '#1a0f1a',
+              border: `1px solid ${SB.border}`,
+              borderRadius: 12, overflow: 'hidden',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+              zIndex: 100,
+            }}
+          >
+            {[
+              { label: 'Profile Settings', to: '/dashboard/settings' },
+              { label: 'My Certificates', to: '/dashboard/certificates' },
+              { label: 'Browse Courses', to: '/courses' },
+            ].map(item => (
+              <button
+                key={item.to}
+                onClick={() => { setOpen(false); navigate(item.to); }}
+                style={{
+                  display: 'block', width: '100%', padding: '10px 14px', border: 'none',
+                  background: 'transparent', cursor: 'pointer', textAlign: 'left',
+                  fontFamily: S.fontBody, fontSize: 13, color: SB.text,
+                  transition: 'background 0.12s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = SB.hover}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                {item.label}
+              </button>
+            ))}
+            <div style={{ height: 1, background: SB.border }} />
+            <button
+              onClick={() => { setOpen(false); signOut(); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                width: '100%', padding: '10px 14px', border: 'none',
+                background: 'transparent', cursor: 'pointer',
+                fontFamily: S.fontBody, fontSize: 13, color: 'rgba(248,112,144,0.8)',
+                transition: 'background 0.12s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = SB.hover}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              {Icon.signout} Sign Out
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ─── Sidebar body ─────────────────────────────────────────────────────────────
+function SidebarContent({ profile, user, signOut, location, onLinkClick }) {
+  const path = location.pathname;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Logo */}
+      <Link
+        to="/"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 9,
+          padding: '18px 14px 14px', textDecoration: 'none',
+          borderBottom: `1px solid ${SB.border}`, flexShrink: 0,
+        }}
+      >
+        <div style={{
+          width: 26, height: 26, borderRadius: 8,
+          background: 'linear-gradient(135deg,#c84070,#f07090)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          <div style={{ width: 9, height: 9, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.85)' }} />
+        </div>
+        <div>
+          <span style={{ fontFamily: S.fontDisplay, fontSize: 18, fontWeight: 600, color: '#f0a0b8', lineHeight: 1 }}>
+            Lumière
+          </span>
+          <div style={{ fontFamily: S.fontBody, fontSize: 9, color: SB.muted, letterSpacing: '0.14em', textTransform: 'uppercase', lineHeight: 1, marginTop: 2 }}>
+            Beauty Academy
+          </div>
+        </div>
+      </Link>
+
+      {/* Navigation */}
+      <nav style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 6px' }}>
+        <NavDivider label="Learning" />
+        <NavItem icon={Icon.overview} label="Overview" to="/dashboard" active={path === '/dashboard'} onClick={onLinkClick} />
+        <NavItem icon={Icon.courses} label="My Courses" to="/dashboard/courses" active={path.startsWith('/dashboard/courses')} onClick={onLinkClick} />
+        <NavItem icon={Icon.certs} label="Certificates" to="/dashboard/certificates" active={path.startsWith('/dashboard/certificates')} onClick={onLinkClick} />
+
+        <NavDivider label="Connect" />
+        <NavItem icon={Icon.calls} label="My Calls" to="/dashboard/calls" active={path.startsWith('/dashboard/calls')} onClick={onLinkClick} />
+
+        <NavDivider label="Account" />
+        <NavItem icon={Icon.settings} label="Settings" to="/dashboard/settings" active={path.startsWith('/dashboard/settings')} onClick={onLinkClick} />
+        <NavItem icon={Icon.explore} label="Browse Courses" to="/courses" active={false} onClick={onLinkClick} />
+      </nav>
+
+      {/* User section */}
+      <div style={{ padding: '10px 10px 14px', borderTop: `1px solid ${SB.border}`, flexShrink: 0 }}>
+        <AvatarDropdown profile={profile} user={user} signOut={signOut} />
+      </div>
+    </div>
+  );
+}
+
+// ─── RouteBreadcrumb ──────────────────────────────────────────────────────────
+function RouteBreadcrumb({ location }) {
+  const map = {
+    '/dashboard': 'Overview',
+    '/dashboard/courses': 'My Courses',
+    '/dashboard/certificates': 'Certificates',
+    '/dashboard/calls': 'My Calls',
+    '/dashboard/settings': 'Settings',
+  };
+  const label = map[location.pathname] || 'Dashboard';
+  return (
+    <span style={{ fontFamily: S.fontBody, fontSize: 13, color: S.textSecondary }}>
+      <span style={{ color: S.textMuted }}>Dashboard</span>
+      {label !== 'Overview' && (
+        <>
+          <span style={{ margin: '0 6px', color: S.textMuted }}>›</span>
+          <span style={{ fontWeight: 500 }}>{label}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+// ─── StudentLayout ────────────────────────────────────────────────────────────
 export default function StudentLayout() {
   const { user, profile } = useAuth();
   const { signOut } = useSignOut();
   const location = useLocation();
-  const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth >= 768);
+  const [isMobile, setIsMobile] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  useCallNotifications();
+  // ── Realtime call invite listener (global guard) ─────────────────────────
+useEffect(() => {
+  if (!user) return;
+  const channelKey = `call_${user.id}`;
 
+  // Prevent duplicate subscriptions across the whole app
+  if (activeCallChannels.has(channelKey)) return;
+  activeCallChannels.add(channelKey);
+
+  const channel = supabase
+    .channel(channelKey)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'video_call_sessions',
+        filter: `student_id=eq.${user.id}`,
+      },
+      (payload) => {
+        if (payload.new.room_ready) {
+          sendNotification('Your call is starting!', { body: 'Instructor is waiting.' });
+          window.dispatchEvent(
+            new CustomEvent('call:invite', { detail: { sessionId: payload.new.id } })
+          );
+        }
+      }
+    )
+    .subscribe((status) => {
+      if (status !== 'SUBSCRIBED') {
+        activeCallChannels.delete(channelKey);
+      }
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+    activeCallChannels.delete(channelKey);
+  };
+}, [user?.id]);
+
+  // Detect mobile
   useEffect(() => {
-    const handleResize = () => {
-      setSidebarOpen(window.innerWidth >= 768);
+    const check = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      setSidebarOpen(!mobile);
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
   }, []);
 
+  // Close sidebar on mobile route change
   useEffect(() => {
-    if (window.innerWidth < 768) setSidebarOpen(false);
-  }, [location.pathname]);
+    if (isMobile) setSidebarOpen(false);
+  }, [location.pathname, isMobile]);
+
+  // Keyboard shortcut: [ to toggle sidebar
+  useEffect(() => {
+    const fn = e => {
+      if (e.key === '[' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        setSidebarOpen(o => !o);
+      }
+    };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, []);
+
+  const closeSidebar = () => isMobile && setSidebarOpen(false);
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: S.canvasBg }}>
-      {/* Sidebar – fixed on mobile, static on desktop */}
-      <AnimatePresence>
-        {sidebarOpen && (
-          <>
-            {/* Mobile backdrop */}
-            {window.innerWidth < 768 && (
+    <>
+      <style>{globalCSS}</style>
+      <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: S.canvasBg }}>
+        {/* ── Desktop sidebar (pushes content) ────────────────────────────── */}
+        {!isMobile && (
+          <motion.aside
+            initial={false}
+            animate={{ width: sidebarOpen ? SB.width : 0 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            style={{
+              background: SB.bg,
+              borderRight: `1px solid ${SB.border}`,
+              flexShrink: 0,
+              overflow: 'hidden',
+              height: '100vh',
+            }}
+          >
+            <div style={{ width: SB.width }}>
+              <SidebarContent
+                profile={profile}
+                user={user}
+                signOut={signOut}
+                location={location}
+                onLinkClick={closeSidebar}
+              />
+            </div>
+          </motion.aside>
+        )}
+
+        {/* ── Mobile sidebar (overlay) ─────────────────────────────────────── */}
+        <AnimatePresence>
+          {isMobile && sidebarOpen && (
+            <>
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                style={{
-                  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.3)',
-                  zIndex: 40,
-                }}
+                transition={{ duration: 0.2 }}
                 onClick={() => setSidebarOpen(false)}
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  background: 'rgba(0,0,0,0.5)',
+                  zIndex: 40,
+                  backdropFilter: 'blur(2px)',
+                }}
               />
-            )}
+              <motion.aside
+                initial={{ x: -SB.width }}
+                animate={{ x: 0 }}
+                exit={{ x: -SB.width }}
+                transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+                style={{
+                  position: 'fixed',
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: SB.width,
+                  background: SB.bg,
+                  borderRight: `1px solid ${SB.border}`,
+                  zIndex: 50,
+                  overflow: 'hidden',
+                }}
+              >
+                <SidebarContent
+                  profile={profile}
+                  user={user}
+                  signOut={signOut}
+                  location={location}
+                  onLinkClick={closeSidebar}
+                />
+              </motion.aside>
+            </>
+          )}
+        </AnimatePresence>
 
-            <motion.aside
-              initial={{ x: -280 }}
-              animate={{ x: 0 }}
-              exit={{ x: -280 }}
-              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        {/* ── Main panel ───────────────────────────────────────────────────── */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+          {/* Desktop collapse toggle + breadcrumb */}
+          {!isMobile && (
+            <div
               style={{
-                position: window.innerWidth < 768 ? 'fixed' : 'relative',
-                zIndex: 50,
-                width: 250,
-                height: '100vh',
-                background: S.sidebarBg,
-                borderRight: `1px solid ${S.sidebarBorder}`,
+                height: 48,
                 display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
+                alignItems: 'center',
+                padding: '0 20px',
+                gap: 16,
+                borderBottom: '1px solid rgba(200,64,112,0.08)',
+                background: 'rgba(250,248,247,0.92)',
+                backdropFilter: 'blur(10px)',
                 flexShrink: 0,
               }}
             >
-              <div style={{ width: 250, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-                {/* Logo */}
-                <Link to="/" style={{
+              <button
+                onClick={() => setSidebarOpen(o => !o)}
+                title="Toggle sidebar  [ "
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: S.textMuted,
+                  padding: 4,
                   display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '16px 14px 12px',
-                  borderBottom: `1px solid ${S.sidebarBorder}`,
-                  textDecoration: 'none',
-                  flexShrink: 0,
-                }}>
-                  <div style={{
-                    width: 22, height: 22, borderRadius: 6,
-                    background: 'linear-gradient(135deg,#c84070,#f07090)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <div style={{ width: 7, height: 7, borderRadius: '50%', border: '1.5px solid rgba(255,255,255,0.8)' }} />
-                  </div>
-                  <span style={{
-                    fontFamily: "'Cormorant Garamond', 'Playfair Display', Georgia, serif",
-                    fontSize: 14,
-                    color: '#f0a0b8',
-                    fontWeight: 600,
-                  }}>
-                    Lumière
-                  </span>
-                </Link>
+                  borderRadius: 6,
+                  transition: 'color 0.15s',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.color = S.rose)}
+                onMouseLeave={e => (e.currentTarget.style.color = S.textMuted)}
+              >
+                {Icon.menu}
+              </button>
+              <RouteBreadcrumb location={location} />
+              <div style={{ flex: 1 }} />
+              <button
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: S.textMuted,
+                  padding: 6,
+                  display: 'flex',
+                  borderRadius: 8,
+                  transition: 'color 0.15s',
+                  position: 'relative',
+                }}
+              >
+                {Icon.bell}
+              </button>
+            </div>
+          )}
 
-                {/* User info (compact) */}
-                <div style={{ padding: '10px 14px 6px', flexShrink: 0 }}>
-                  <p style={{
-                    fontFamily: "'DM Sans', system-ui, sans-serif",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: S.sidebarText,
-                    margin: 0,
-                  }}>
-                    {profile?.full_name || 'Student'}
-                  </p>
-                  <p style={{
-                    fontFamily: "'DM Sans', system-ui, sans-serif",
-                    fontSize: 10,
-                    color: S.sidebarMuted,
-                    margin: 0,
-                  }}>
-                    {user?.email}
-                  </p>
-                </div>
+          {/* Mobile topbar */}
+          {isMobile && (
+            <MobileTopbar
+              onOpenSidebar={() => setSidebarOpen(true)}
+              profile={profile}
+              user={user}
+            />
+          )}
 
-                {/* Navigation */}
-                <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
-                  <NavItem
-                    icon={Icons.dashboard}
-                    label="Overview"
-                    to="/dashboard"
-                    active={location.pathname === '/dashboard'}
-                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
-                  />
-                  <NavItem
-                    icon={Icons.courses}
-                    label="My Courses"
-                    to="/dashboard/courses"
-                    active={location.pathname.startsWith('/dashboard/courses')}
-                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
-                  />
-                  <NavItem
-                    icon={Icons.certificates}
-                    label="Certificates"
-                    to="/dashboard/certificates"
-                    active={location.pathname.startsWith('/dashboard/certificates')}
-                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
-                  />
-                  <NavItem
-                    icon={Icons.calls}
-                    label="My Calls"
-                    to="/dashboard/calls"
-                    active={location.pathname.startsWith('/dashboard/calls')}
-                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
-                  />
-                  <NavItem
-                    icon={Icons.settings}
-                    label="Settings"
-                    to="/dashboard/settings"
-                    active={location.pathname.startsWith('/dashboard/settings')}
-                    onClick={() => { if (window.innerWidth < 768) setSidebarOpen(false); }}
-                  />
-                </nav>
-
-                {/* Logout */}
-                <div style={{ padding: '8px 14px', borderTop: `1px solid ${S.sidebarBorder}`, flexShrink: 0 }}>
-                  <button
-                    onClick={signOut}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      background: 'transparent',
-                      border: 'none',
-                      color: S.sidebarMuted,
-                      fontFamily: "'DM Sans', system-ui, sans-serif",
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      padding: '6px 8px',
-                      borderRadius: 6,
-                      width: '100%',
-                      transition: 'background 0.15s',
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = S.sidebarHover}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  >
-                    {Icons.logout} Sign Out
-                  </button>
-                </div>
-              </div>
-            </motion.aside>
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Main content – absolutely no extra padding or header */}
-      <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
-        {/* Mobile hamburger (only when sidebar closed) */}
-        {!sidebarOpen && (
-          <button
-            onClick={() => setSidebarOpen(true)}
-            style={{
-              position: 'fixed',
-              top: 12,
-              left: 12,
-              zIndex: 20,
-              background: 'rgba(255,255,255,0.85)',
-              backdropFilter: 'blur(8px)',
-              border: '1px solid rgba(220,160,180,0.2)',
-              borderRadius: 8,
-              padding: 6,
-              cursor: 'pointer',
-              color: '#c84070',
-              lineHeight: 0,
-            }}
-          >
-            {Icons.hamburger}
-          </button>
-        )}
-        <Outlet />
+          {/* Page content */}
+          <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+            <Outlet />
+          </main>
+        </div>
       </div>
 
       {/* Global floating widgets */}
       <ChatBubble />
       <CallToast />
-    </div>
+    </>
   );
 }
