@@ -39,6 +39,8 @@ const VerifyCertificatePage = lazy(() => import('@/features/certificates/VerifyC
 const StudentLayout = lazy(() => import('@/shared/layouts/StudentLayout'));
 const SettingsPage = lazy(() => import('@/features/dashboard/student/SettingsPage'));
 
+const AdminAnalytics = lazy(() => import('@/features/dashboard/admin/AdminAnalyticsPage'));
+
 import PublicLayout from '@/shared/layouts/PublicLayout';
 
 export default function App() {
@@ -71,6 +73,7 @@ export default function App() {
           <Route path="/admin/orders" element={<AdminOrders />} />
           <Route path="/admin/chat" element={<AdminChat />} />
           <Route path="/admin/calls" element={<AdminCallsPage />} />
+          <Route path="/admin/analytics" element={<AdminAnalytics />} />
         </Route>
 
         {/* ─── Student protected routes (with sidebar layout) ─── */}

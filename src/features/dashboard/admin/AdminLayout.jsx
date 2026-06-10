@@ -9,6 +9,7 @@ const navItems = [
   { to: '/admin/orders', label: 'Orders', icon: '💰' },
   { to: '/admin/chat', label: 'Chat', icon: '💬' },
   { to: '/admin/calls', label: 'Calls', icon: '📞' },
+  { to: '/admin/analytics', label: 'Analytics', icon: '📈' },
 ];
 
 export default function AdminLayout({ children }) {
