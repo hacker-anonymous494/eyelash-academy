@@ -1,49 +1,12 @@
-/**
- * useWebRTC.js — Complete rewrite fixing all connection bugs
- *
- * ROOT CAUSES FIXED:
- * 1. Stale closure: channel subscription captured old handleSignal closure.
- *    FIX: store handleSignal in a ref (handleSignalRef) so channel always
- *         calls the latest version regardless of when it subscribed.
- *
- * 2. ICE candidate queue: ICE candidates arrived before remoteDescription
- *    was set on the answerer side → silently dropped → no connection.
- *    FIX: buffer ICE candidates in iceCandidateQueue ref; drain after
- *         setRemoteDescription completes.
- *
- * 3. Echo from self: Supabase broadcast echoes back to sender.
- *    FIX: tag every signal with senderId=userId; ignore our own signals.
- *
- * 4. Race on answerer path: createPeerConnection is async (getUserMedia),
- *    so peerRef.current was null when the offer callback tried to use it.
- *    FIX: createPeerConnection now sets peerRef.current synchronously
- *         before any await, and we await it fully before processing offer.
- *
- * 5. Added free TURN servers for NAT traversal (covers ~30% of networks
- *    where STUN alone fails).
- */
-
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/config/supabase';
 
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
+  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ];
 
 export function useWebRTC(sessionId, userId) {
@@ -54,19 +17,16 @@ export function useWebRTC(sessionId, userId) {
   const [isMuted, setIsMuted]           = useState(false);
   const [isCamOff, setIsCamOff]         = useState(false);
 
-  // All mutable internals live in refs → no stale closure issues
   const peerRef            = useRef(null);
   const channelRef         = useRef(null);
   const streamRef          = useRef(null);
-  const iceCandidateQueue  = useRef([]); // buffered until remoteDesc set
+  const iceCandidateQueue  = useRef([]);
   const remoteDescSet      = useRef(false);
   const signalingReady     = useRef(false);
   const statusRef          = useRef('idle');
   const mountedRef         = useRef(true);
-
-  // KEY FIX #1: store handleSignal in a ref so the channel callback
-  // always invokes the latest version, never a stale closure.
   const handleSignalRef    = useRef(null);
+  const offerSent          = useRef(false);
 
   const safeSetStatus = useCallback((s) => {
     if (!mountedRef.current) return;
@@ -74,7 +34,6 @@ export function useWebRTC(sessionId, userId) {
     setStatus(s);
   }, []);
 
-  // ── Send a signal, tagging with our userId to filter echoes ─────────────
   const sendSignal = useCallback((data) => {
     if (channelRef.current && signalingReady.current) {
       channelRef.current.send({
@@ -85,21 +44,16 @@ export function useWebRTC(sessionId, userId) {
     }
   }, [userId]);
 
-  // ── Drain ICE candidate queue after remote description is set ────────────
   const drainQueue = useCallback(async (peer) => {
     const q = iceCandidateQueue.current.splice(0);
     for (const c of q) {
-      try {
-        await peer.addIceCandidate(new RTCIceCandidate(c));
-      } catch (_) { /* trickle ICE; ignore */ }
+      try { await peer.addIceCandidate(new RTCIceCandidate(c)); } catch (_) {}
     }
   }, []);
 
-  // ── Create RTCPeerConnection and attach stream ────────────────────────────
   const createPeerConnection = useCallback(async (asOfferer) => {
     setError(null);
 
-    // Get media first
     if (!streamRef.current) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -116,44 +70,37 @@ export function useWebRTC(sessionId, userId) {
       }
     }
 
-    // Close any stale peer
     if (peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
     }
 
     const peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    peerRef.current = peer; // set synchronously before any async work
-    console.log('[WebRTC] createPeerConnection, asOfferer:', asOfferer, 'peer created'); // ADDED LOG
+    peerRef.current = peer;
     remoteDescSet.current = false;
     iceCandidateQueue.current = [];
 
-    // Add tracks
     streamRef.current.getTracks().forEach(track =>
       peer.addTrack(track, streamRef.current)
     );
 
-    // Remote stream
     peer.ontrack = (e) => {
       if (!mountedRef.current) return;
       setRemoteStream(e.streams[0]);
       safeSetStatus('connected');
     };
 
-    // ICE candidates → send to remote
     peer.onicecandidate = (e) => {
       if (e.candidate) {
         sendSignal({ type: 'ice', candidate: e.candidate.toJSON() });
       }
     };
 
-    // Connection state changes
     peer.oniceconnectionstatechange = () => {
       const s = peer.iceConnectionState;
       console.debug('[WebRTC] ICE state:', s);
       if (s === 'connected' || s === 'completed') safeSetStatus('connected');
       if (s === 'failed') {
-        // Try ICE restart before giving up
         try { peer.restartIce(); } catch (_) {}
         setError('Connection unstable — attempting reconnect…');
       }
@@ -167,26 +114,35 @@ export function useWebRTC(sessionId, userId) {
       if (s === 'closed' && statusRef.current !== 'ended') safeSetStatus('ended');
     };
 
-    // If offerer: create and send offer immediately
     if (asOfferer) {
       const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await peer.setLocalDescription(offer);
       sendSignal({ type: 'offer', sdp: peer.localDescription });
+      offerSent.current = true;
     }
 
     return peer;
-  }, [sendSignal, safeSetStatus]);
+  }, [sendSignal, safeSetStatus, drainQueue]);
 
-  // ── Handle incoming signal — assigned to ref so channel always has latest ──
+  // Signal handler
   const handleSignal = useCallback(async (data) => {
-    // ADDED LOG for incoming signals
-    console.log('[WebRTC] handleSignal received:', data.type, 'from:', data._from, 'my id:', userId);
-
-    // KEY FIX #3: ignore our own echoed signals
     if (data._from === userId) return;
 
+    if (data.type === 'ready') {
+      // answerer is present; if we are offerer and haven't sent an offer, do it now
+      if (offerSent.current) return;
+      const peer = peerRef.current;
+      if (!peer) return;
+      try {
+        const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+        await peer.setLocalDescription(offer);
+        sendSignal({ type: 'offer', sdp: peer.localDescription });
+        offerSent.current = true;
+      } catch (e) { console.error(e); }
+      return;
+    }
+
     if (data.type === 'offer') {
-      // KEY FIX #4: fully await createPeerConnection before using peerRef
       if (!peerRef.current) {
         const peer = await createPeerConnection(false);
         if (!peer) return;
@@ -196,7 +152,7 @@ export function useWebRTC(sessionId, userId) {
       try {
         await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
         remoteDescSet.current = true;
-        await drainQueue(peer); // KEY FIX #2: drain buffered ICE
+        await drainQueue(peer);
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         sendSignal({ type: 'answer', sdp: peer.localDescription });
@@ -211,11 +167,11 @@ export function useWebRTC(sessionId, userId) {
     if (data.type === 'answer') {
       const peer = peerRef.current;
       if (!peer) return;
-      if (peer.signalingState !== 'have-local-offer') return; // guard
+      if (peer.signalingState !== 'have-local-offer') return;
       try {
         await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
         remoteDescSet.current = true;
-        await drainQueue(peer); // KEY FIX #2: drain buffered ICE
+        await drainQueue(peer);
       } catch (e) {
         console.error('[WebRTC] answer handling error:', e);
       }
@@ -224,32 +180,22 @@ export function useWebRTC(sessionId, userId) {
 
     if (data.type === 'ice') {
       const peer = peerRef.current;
-      if (!peer) {
-        // KEY FIX #2: no peer yet — buffer the candidate
+      if (!peer || !remoteDescSet.current) {
         iceCandidateQueue.current.push(data.candidate);
         return;
       }
-      if (!remoteDescSet.current) {
-        // KEY FIX #2: remote desc not set yet — buffer
-        iceCandidateQueue.current.push(data.candidate);
-        return;
-      }
-      try {
-        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-      } catch (_) { /* ignore trickle ICE errors */ }
+      try { await peer.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (_) {}
       return;
     }
 
     if (data.type === 'end') {
-      // Remote ended the call
       _cleanup(false);
     }
   }, [userId, createPeerConnection, sendSignal, safeSetStatus, drainQueue]);
 
-  // Keep ref always pointing to latest handleSignal
   handleSignalRef.current = handleSignal;
 
-  // ── Subscribe to signaling channel ───────────────────────────────────────
+  // Subscribe to signaling channel
   useEffect(() => {
     if (!sessionId || !userId) return;
 
@@ -258,7 +204,6 @@ export function useWebRTC(sessionId, userId) {
 
     channel
       .on('broadcast', { event: 'signal' }, (msg) => {
-        // KEY FIX #1: call via ref — always the latest handleSignal
         handleSignalRef.current?.(msg.payload);
       })
       .subscribe((s) => {
@@ -275,7 +220,6 @@ export function useWebRTC(sessionId, userId) {
     };
   }, [sessionId, userId]);
 
-  // ── Cleanup on unmount ───────────────────────────────────────────────────
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -284,7 +228,6 @@ export function useWebRTC(sessionId, userId) {
     };
   }, []);
 
-  // ── Internal cleanup ─────────────────────────────────────────────────────
   function _cleanup(sendEnd = true) {
     if (sendEnd && channelRef.current && signalingReady.current) {
       try {
@@ -303,23 +246,19 @@ export function useWebRTC(sessionId, userId) {
     remoteDescSet.current = false;
   }
 
-  // ── Public API ────────────────────────────────────────────────────────────
+  // Public API
   const startCall = useCallback(async () => {
-    console.log('[WebRTC] startCall called, current status:', statusRef.current); // ADDED LOG
     if (statusRef.current === 'calling' || statusRef.current === 'connected') return;
     safeSetStatus('calling');
     setError(null);
 
-    // Wait up to 3s for signaling channel
     if (!signalingReady.current) {
-      console.log('[WebRTC] Waiting for signaling channel…'); // ADDED LOG
       await new Promise(resolve => {
         const check = setInterval(() => {
           if (signalingReady.current) { clearInterval(check); resolve(); }
         }, 100);
         setTimeout(() => { clearInterval(check); resolve(); }, 3000);
       });
-      console.log('[WebRTC] Signaling channel ready:', signalingReady.current); // ADDED LOG
     }
 
     const { data: sess } = await supabase
@@ -330,8 +269,6 @@ export function useWebRTC(sessionId, userId) {
 
     if (!sess) { setError('Session not found.'); safeSetStatus('idle'); return; }
 
-    console.log('[WebRTC] offerer_id:', sess.offerer_id, 'my user:', userId); // ADDED LOG
-
     if (!sess.offerer_id) {
       const { error: claimErr } = await supabase
         .from('video_call_sessions')
@@ -340,21 +277,34 @@ export function useWebRTC(sessionId, userId) {
         .is('offerer_id', null);
 
       if (!claimErr) {
-        console.log('[WebRTC] I am offerer'); // ADDED LOG
-        await createPeerConnection(true);
+        // We are offerer
+        const peer = await createPeerConnection(false); // false because we'll send offer after ready
+        if (peer) {
+          // Wait for answerer to signal ready, OR if they already joined (joined_by includes them), send now
+          const { data: session } = await supabase.from('video_call_sessions').select('joined_by').eq('id', sessionId).single();
+          const joined = session?.joined_by || [];
+          if (joined.length > 0) {
+            // Answerer already present, send offer immediately
+            const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+            await peer.setLocalDescription(offer);
+            sendSignal({ type: 'offer', sdp: peer.localDescription });
+            offerSent.current = true;
+          }
+          // else we wait for 'ready' signal to send offer (handled in handleSignal)
+        }
       } else {
-        console.log('[WebRTC] Someone else claimed offerer, I am answerer'); // ADDED LOG
-        await createPeerConnection(false);
+        await createPeerConnection(false); // answerer
       }
     } else if (sess.offerer_id === userId) {
-      console.log('[WebRTC] I was already offerer (reconnect)'); // ADDED LOG
-      await createPeerConnection(true);
+      await createPeerConnection(true); // rejoin as offerer
     } else {
-      console.log('[WebRTC] I am answerer'); // ADDED LOG
-      await createPeerConnection(false);
+      // Answerer: create peer and send 'ready'
+      const peer = await createPeerConnection(false);
+      if (peer) {
+        sendSignal({ type: 'ready' });
+      }
     }
-    console.log('[WebRTC] startCall completed'); // ADDED LOG
-  }, [sessionId, userId, safeSetStatus, createPeerConnection]);
+  }, [sessionId, userId, safeSetStatus, createPeerConnection, sendSignal]);
 
   const endCall = useCallback(() => {
     _cleanup(true);
