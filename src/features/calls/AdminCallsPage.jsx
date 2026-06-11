@@ -1,18 +1,3 @@
-/**
- * AdminCallsPage.jsx
- *
- * FIXES:
- * 1. Admin gets browser notification when a student books a new call.
- *    Uses a Supabase INSERT listener on video_call_sessions (no filter = all rows).
- *    Requests notification permission proactively via a banner.
- * 2. Shows ALL sessions (scheduled + active + recent ended), not just future ones.
- *    Admin needs to see past scheduled calls that may still be joinable.
- * 3. Real-time updates via Supabase subscription — page auto-refreshes when
- *    sessions change (new bookings, status changes).
- * 4. "Join Call" available for any non-ended session regardless of scheduled_at.
- *    Admin should always be able to join a session the student booked.
- */
-
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
@@ -51,20 +36,34 @@ function SessionCard({ session, onJoin, index }) {
       style={{
         background: isLive ? 'rgba(46,204,113,0.05)' : 'rgba(255,255,255,0.96)',
         border: isLive ? '1.5px solid rgba(46,204,113,0.3)' : '1px solid rgba(200,64,112,0.12)',
-        borderRadius: 16, padding: '18px 22px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+        borderRadius: 16,
+        padding: '18px 22px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 16,
         boxShadow: isLive ? '0 4px 20px rgba(46,204,113,0.12)' : '0 2px 12px rgba(180,60,90,0.06)',
         flexWrap: 'wrap',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 1, minWidth: 0 }}>
         {/* Avatar */}
-        <div style={{
-          width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-          background: 'linear-gradient(135deg,#c84070,#f07090)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: F.display, fontSize: 18, fontWeight: 600, color: 'white',
-        }}>
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            flexShrink: 0,
+            background: 'linear-gradient(135deg,#c84070,#f07090)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: F.display,
+            fontSize: 18,
+            fontWeight: 600,
+            color: 'white',
+          }}
+        >
           {(session.student?.full_name || '?')[0].toUpperCase()}
         </div>
 
@@ -73,10 +72,26 @@ function SessionCard({ session, onJoin, index }) {
             {session.student?.full_name || 'Unknown Student'}
           </p>
           <p style={{ fontFamily: F.body, fontSize: 12, color: '#9a6878', margin: '2px 0 0' }}>
-            {dt.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            {dt.toLocaleString([], {
+              weekday: 'short',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-            <span style={{ fontFamily: F.body, fontSize: 11, fontWeight: 600, color, background: bg, borderRadius: 100, padding: '3px 10px' }}>
+            <span
+              style={{
+                fontFamily: F.body,
+                fontSize: 11,
+                fontWeight: 600,
+                color,
+                background: bg,
+                borderRadius: 100,
+                padding: '3px 10px',
+              }}
+            >
               {text}
             </span>
             {session.joined_by?.length > 0 && (
@@ -93,15 +108,31 @@ function SessionCard({ session, onJoin, index }) {
           <button
             onClick={() => onJoin(session.id)}
             style={{
-              background: isLive ? 'linear-gradient(135deg,#27ae60,#2ecc71)' : 'linear-gradient(135deg,#c84070,#f07090)',
-              color: 'white', border: 'none', borderRadius: 100,
-              padding: '10px 22px', cursor: 'pointer',
-              fontFamily: F.body, fontSize: 13, fontWeight: 600,
-              boxShadow: isLive ? '0 3px 12px rgba(46,204,113,0.4)' : '0 3px 12px rgba(200,64,112,0.35)',
-              transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 6,
+              background: isLive
+                ? 'linear-gradient(135deg,#27ae60,#2ecc71)'
+                : 'linear-gradient(135deg,#c84070,#f07090)',
+              color: 'white',
+              border: 'none',
+              borderRadius: 100,
+              padding: '10px 22px',
+              cursor: 'pointer',
+              fontFamily: F.body,
+              fontSize: 13,
+              fontWeight: 600,
+              boxShadow: isLive
+                ? '0 3px 12px rgba(46,204,113,0.4)'
+                : '0 3px 12px rgba(200,64,112,0.35)',
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}
-            onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
-            onMouseLeave={e => { e.currentTarget.style.transform = 'none'; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'none';
+            }}
           >
             {isLive ? '🔴' : '📞'} {isLive ? 'Join Now' : 'Start Call'}
           </button>
@@ -124,7 +155,11 @@ export default function AdminCallsPage() {
 
   // Show notification permission banner if not granted
   useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'default' && !notifBannerShownRef.current) {
+    if (
+      'Notification' in window &&
+      Notification.permission === 'default' &&
+      !notifBannerShownRef.current
+    ) {
       notifBannerShownRef.current = true;
       setShowNotifBanner(true);
     }
@@ -149,30 +184,41 @@ export default function AdminCallsPage() {
   useEffect(() => {
     const channel = supabase
       .channel('admin_calls_realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'video_call_sessions' }, (payload) => {
-        // A student just booked a call → notify admin
-        const s = payload.new;
-        setSessions(prev => [{ ...s, student: null }, ...prev]);
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'video_call_sessions' },
+        (payload) => {
+          const s = payload.new;
+          setSessions((prev) => [{ ...s, student: null }, ...prev]);
 
-        // Fetch student name for the new session
-        supabase.from('profiles').select('full_name').eq('id', s.student_id).single()
-          .then(({ data }) => {
-            setSessions(prev => prev.map(sess =>
-              sess.id === s.id ? { ...sess, student: data } : sess
-            ));
+          supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', s.student_id)
+            .single()
+            .then(({ data }) => {
+              setSessions((prev) =>
+                prev.map((sess) => (sess.id === s.id ? { ...sess, student: data } : sess))
+              );
+            });
+
+          playCallSound();
+          sendNotification('📅 New Call Booked!', {
+            body: `A student has scheduled a 1-on-1 session for ${new Date(s.scheduled_at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+            tag: `booking-${s.id}`,
+            requireInteraction: true,
           });
-
-        // Notify admin
-        playCallSound();
-        sendNotification('📅 New Call Booked!', {
-          body: `A student has scheduled a 1-on-1 session for ${new Date(s.scheduled_at).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
-          tag: `booking-${s.id}`,
-          requireInteraction: true,
-        });
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'video_call_sessions' }, (payload) => {
-        setSessions(prev => prev.map(s => s.id === payload.new.id ? { ...s, ...payload.new } : s));
-      })
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'video_call_sessions' },
+        (payload) => {
+          setSessions((prev) =>
+            prev.map((s) => (s.id === payload.new.id ? { ...s, ...payload.new } : s))
+          );
+        }
+      )
       .subscribe();
 
     return () => supabase.removeChannel(channel);
@@ -182,9 +228,8 @@ export default function AdminCallsPage() {
     navigate(`/call/${sessionId}`);
   };
 
-  const displayed = filter === 'active'
-    ? sessions.filter(s => s.status !== 'ended')
-    : sessions;
+  const displayed =
+    filter === 'active' ? sessions.filter((s) => s.status !== 'ended') : sessions;
 
   return (
     <AdminLayout>
@@ -192,13 +237,30 @@ export default function AdminCallsPage() {
 
       {/* Notification permission banner */}
       {showNotifBanner && (
-        <div style={{
-          background: 'rgba(200,64,112,0.07)', border: '1px solid rgba(200,64,112,0.2)',
-          borderRadius: 12, padding: '12px 18px', marginBottom: 20,
-          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-        }}>
+        <div
+          style={{
+            background: 'rgba(200,64,112,0.07)',
+            border: '1px solid rgba(200,64,112,0.2)',
+            borderRadius: 12,
+            padding: '12px 18px',
+            marginBottom: 20,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
           <span style={{ fontSize: 18 }}>🔔</span>
-          <p style={{ fontFamily: F.body, fontSize: 13, color: '#4a2028', margin: 0, flex: 1, minWidth: 200 }}>
+          <p
+            style={{
+              fontFamily: F.body,
+              fontSize: 13,
+              color: '#4a2028',
+              margin: 0,
+              flex: 1,
+              minWidth: 200,
+            }}
+          >
             Enable browser notifications to be alerted when a student books a new call.
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -207,11 +269,33 @@ export default function AdminCallsPage() {
                 const granted = await requestNotificationPermission();
                 setShowNotifBanner(false);
               }}
-              style={{ background: 'linear-gradient(135deg,#c84070,#f07090)', color: 'white', border: 'none', borderRadius: 100, padding: '7px 18px', cursor: 'pointer', fontFamily: F.body, fontSize: 12, fontWeight: 500 }}>
+              style={{
+                background: 'linear-gradient(135deg,#c84070,#f07090)',
+                color: 'white',
+                border: 'none',
+                borderRadius: 100,
+                padding: '7px 18px',
+                cursor: 'pointer',
+                fontFamily: F.body,
+                fontSize: 12,
+                fontWeight: 500,
+              }}
+            >
               Enable
             </button>
-            <button onClick={() => setShowNotifBanner(false)}
-              style={{ background: 'transparent', color: '#9a6878', border: '1px solid rgba(200,64,112,0.2)', borderRadius: 100, padding: '7px 14px', cursor: 'pointer', fontFamily: F.body, fontSize: 12 }}>
+            <button
+              onClick={() => setShowNotifBanner(false)}
+              style={{
+                background: 'transparent',
+                color: '#9a6878',
+                border: '1px solid rgba(200,64,112,0.2)',
+                borderRadius: 100,
+                padding: '7px 14px',
+                cursor: 'pointer',
+                fontFamily: F.body,
+                fontSize: 12,
+              }}
+            >
               Later
             </button>
           </div>
@@ -219,23 +303,53 @@ export default function AdminCallsPage() {
       )}
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 14 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 24,
+          flexWrap: 'wrap',
+          gap: 14,
+        }}
+      >
         <div>
-          <h2 style={{ fontFamily: F.display, fontSize: 32, fontWeight: 600, color: '#1a0810', margin: 0 }}>Video Call Sessions</h2>
+          <h2
+            style={{
+              fontFamily: F.display,
+              fontSize: 32,
+              fontWeight: 600,
+              color: '#1a0810',
+              margin: 0,
+            }}
+          >
+            Video Call Sessions
+          </h2>
           <p style={{ fontFamily: F.body, fontSize: 13, color: '#9a6878', margin: '4px 0 0' }}>
-            {sessions.filter(s => s.status !== 'ended').length} active · {sessions.filter(s => s.room_ready).length} live now
+            {sessions.filter((s) => s.status !== 'ended').length} active ·{' '}
+            {sessions.filter((s) => s.room_ready).length} live now
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {['active', 'all'].map(f => (
-            <button key={f} onClick={() => setFilter(f)} style={{
-              fontFamily: F.body, fontSize: 12, fontWeight: 500,
-              background: filter === f ? 'linear-gradient(135deg,#c84070,#f07090)' : 'transparent',
-              color: filter === f ? 'white' : '#9a6878',
-              border: filter === f ? 'none' : '1px solid rgba(200,64,112,0.2)',
-              borderRadius: 100, padding: '7px 18px', cursor: 'pointer',
-              boxShadow: filter === f ? '0 2px 10px rgba(200,64,112,0.3)' : 'none',
-            }}>
+          {['active', 'all'].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              style={{
+                fontFamily: F.body,
+                fontSize: 12,
+                fontWeight: 500,
+                background: filter === f
+                  ? 'linear-gradient(135deg,#c84070,#f07090)'
+                  : 'transparent',
+                color: filter === f ? 'white' : '#9a6878',
+                border: filter === f ? 'none' : '1px solid rgba(200,64,112,0.2)',
+                borderRadius: 100,
+                padding: '7px 18px',
+                cursor: 'pointer',
+                boxShadow: filter === f ? '0 2px 10px rgba(200,64,112,0.3)' : 'none',
+              }}
+            >
               {f === 'active' ? 'Active' : 'All History'}
             </button>
           ))}
@@ -244,17 +358,35 @@ export default function AdminCallsPage() {
 
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
-          <div style={{ width: 44, height: 44, borderRadius: '50%', border: '3px solid rgba(200,64,112,0.15)', borderTop: '3px solid #c84070', animation: 'spin 0.7s linear infinite' }} />
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: '50%',
+              border: '3px solid rgba(200,64,112,0.15)',
+              borderTop: '3px solid #c84070',
+              animation: 'spin 0.7s linear infinite',
+            }}
+          />
         </div>
       ) : displayed.length === 0 ? (
-        <div style={{
-          background: 'rgba(255,255,255,0.9)', border: '1px solid rgba(200,64,112,0.12)',
-          borderRadius: 16, padding: '48px 32px', textAlign: 'center',
-        }}>
+        <div
+          style={{
+            background: 'rgba(255,255,255,0.9)',
+            border: '1px solid rgba(200,64,112,0.12)',
+            borderRadius: 16,
+            padding: '48px 32px',
+            textAlign: 'center',
+          }}
+        >
           <div style={{ fontSize: 40, marginBottom: 14 }}>📅</div>
-          <h3 style={{ fontFamily: F.display, fontSize: 22, color: '#1a0810', margin: '0 0 8px' }}>No sessions found</h3>
+          <h3 style={{ fontFamily: F.display, fontSize: 22, color: '#1a0810', margin: '0 0 8px' }}>
+            No sessions found
+          </h3>
           <p style={{ fontFamily: F.body, fontSize: 13, color: '#9a6878', margin: 0 }}>
-            {filter === 'active' ? 'No active or upcoming sessions.' : 'No sessions in history.'}
+            {filter === 'active'
+              ? 'No active or upcoming sessions.'
+              : 'No sessions in history.'}
           </p>
         </div>
       ) : (
