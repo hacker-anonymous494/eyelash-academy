@@ -17,8 +17,20 @@ export default function StudentCallsPage() {
         .from('video_call_sessions')
         .select('*')
         .eq('student_id', user.id)
-        .order('scheduled_at', { ascending: false });
-      setSessions(data || []);
+        .order('scheduled_at', { ascending: false })
+        .limit(20); // fetch more to filter
+
+      if (data) {
+        const now = new Date();
+        // Filter out ended and very old sessions
+        const filtered = data.filter(s => {
+          if (s.status === 'ended') return false;
+          const scheduled = new Date(s.scheduled_at);
+          // Keep sessions that are still joinable (within 2 hours of scheduled time)
+          return scheduled > new Date(now.getTime() - 2 * 60 * 60 * 1000);
+        });
+        setSessions(filtered.slice(0, 5)); // show only 5 most recent
+      }
       setLoading(false);
     }
     if (user) fetchSessions();
@@ -37,28 +49,33 @@ export default function StudentCallsPage() {
           <div className="animate-spin h-10 w-10 border-4 border-brand-rose-200 border-t-brand-rose-600 rounded-full" />
         ) : sessions.length === 0 ? (
           <GlassCard className="p-8 text-center">
-            <p className="text-gray-500">No scheduled calls.</p>
+            <p className="text-gray-500">No upcoming calls.</p>
             <Link to="/dashboard/book-call" className="btn-primary mt-4 inline-block">
               Schedule your first session
             </Link>
           </GlassCard>
         ) : (
           <div className="space-y-4">
-            {sessions.map((s) => (
-              <GlassCard key={s.id} className="flex justify-between items-center p-4">
-                <div>
-                  <p className="font-medium">{new Date(s.scheduled_at).toLocaleString()}</p>
-                  <p className={`text-sm ${s.status === 'active' || s.room_ready ? 'text-green-600 font-semibold' : 'text-gray-500'}`}>
-                    {s.room_ready ? 'Instructor is waiting – join now!' : s.status}
-                  </p>
-                </div>
-                {(s.status === 'scheduled' || s.room_ready || s.status === 'active') && (
-                  <button onClick={() => navigate(`/call/${s.id}`)} className="btn-primary text-sm">
-                    {s.room_ready ? 'Join Now' : 'Join Call'}
-                  </button>
-                )}
-              </GlassCard>
-            ))}
+            {sessions.map((s) => {
+              const canJoin = s.status === 'active' || s.room_ready || new Date(s.scheduled_at) <= new Date();
+              return (
+                <GlassCard key={s.id} className="flex justify-between items-center p-4">
+                  <div>
+                    <p className="font-medium">{new Date(s.scheduled_at).toLocaleString()}</p>
+                    <p className={`text-sm ${s.room_ready ? 'text-green-600 font-semibold' : 'text-gray-500'}`}>
+                      {s.room_ready ? 'Instructor is waiting – join now!' : s.status}
+                    </p>
+                  </div>
+                  {canJoin && s.status !== 'ended' ? (
+                    <button onClick={() => navigate(`/call/${s.id}`)} className="btn-primary text-sm">
+                      {s.room_ready ? 'Join Now' : 'Join Call'}
+                    </button>
+                  ) : (
+                    <span className="text-gray-400 text-sm">Expired</span>
+                  )}
+                </GlassCard>
+              );
+            })}
           </div>
         )}
       </div>

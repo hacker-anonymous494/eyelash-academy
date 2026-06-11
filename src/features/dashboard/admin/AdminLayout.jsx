@@ -14,6 +14,9 @@ const navItems = [
 
 export default function AdminLayout({ children }) {
   useAdminNotifications();
+  useEffect(() => {
+  requestNotificationPermission();
+}, []);
   const location = useLocation();
   const { signOut } = useSignOut();
 
