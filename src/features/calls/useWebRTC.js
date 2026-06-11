@@ -22,7 +22,8 @@ export function useWebRTC(sessionId, userId) {
   const remoteDescSet      = useRef(false);
   const statusRef          = useRef('idle');
   const mountedRef         = useRef(true);
-  const signalSubRef       = useRef(null); // subscription for signal table
+  const readyReceived      = useRef(false);
+  const offerSent          = useRef(false);
 
   const safeSetStatus = useCallback((s) => {
     if (!mountedRef.current) return;
@@ -35,7 +36,7 @@ export function useWebRTC(sessionId, userId) {
     if (!sessionId || !userId) return;
     const payload = { ...data, _from: userId };
 
-    // 1. Broadcast (best-effort)
+    // Broadcast
     if (channelRef.current) {
       channelRef.current.send({
         type: 'broadcast',
@@ -44,7 +45,7 @@ export function useWebRTC(sessionId, userId) {
       }).catch(() => {});
     }
 
-    // 2. Database (guaranteed delivery)
+    // Database (guaranteed delivery)
     await supabase.from('webrtc_signals').insert({
       session_id: sessionId,
       sender_id: userId,
@@ -53,16 +54,20 @@ export function useWebRTC(sessionId, userId) {
     });
   }, [sessionId, userId]);
 
-  // Listen for database signals
+  // Listen for database signals (real‑time)
   useEffect(() => {
     if (!sessionId || !userId) return;
 
-    // Polling fallback – remove after broadcast works
-    const dbSubscription = supabase
+    const dbChannel = supabase
       .channel(`db_signals_${sessionId}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'webrtc_signals', filter: `session_id=eq.${sessionId}` },
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'webrtc_signals',
+          filter: `session_id=eq.${sessionId}`,
+        },
         (payload) => {
           const signal = payload.new;
           if (signal.sender_id !== userId) {
@@ -73,12 +78,33 @@ export function useWebRTC(sessionId, userId) {
       )
       .subscribe();
 
-    signalSubRef.current = dbSubscription;
-
     return () => {
-      supabase.removeChannel(dbSubscription);
+      supabase.removeChannel(dbChannel);
     };
   }, [sessionId, userId]);
+
+  // Listen for broadcast signals
+  useEffect(() => {
+    if (!sessionId || !userId) return;
+
+    const channel = supabase.channel(`webrtc_${sessionId}`);
+    channelRef.current = channel;
+
+    channel
+      .on('broadcast', { event: 'signal' }, (msg) => {
+        const data = msg.payload;
+        if (data._from === userId) return;
+        console.log('[WebRTC] broadcast received:', data.type);
+        handleSignal(data);
+      })
+      .subscribe((s) => {
+        if (s === 'SUBSCRIBED') console.log('[WebRTC] broadcast channel SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [sessionId, userId, handleSignal]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -98,6 +124,8 @@ export function useWebRTC(sessionId, userId) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
+    readyReceived.current = false;
+    offerSent.current = false;
   }
 
   const createPeerConnection = useCallback(async (asOfferer) => {
@@ -141,72 +169,104 @@ export function useWebRTC(sessionId, userId) {
       if (s === 'failed') setError('Connection failed. Please rejoin.');
     };
 
-    if (asOfferer) {
-      const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
-      await peer.setLocalDescription(offer);
-      await sendSignalDual({ type: 'offer', sdp: peer.localDescription });
-    }
-
     return peer;
   }, [sendSignalDual, safeSetStatus]);
 
+  const sendOffer = useCallback(async () => {
+    if (!peerRef.current || offerSent.current) return;
+    const peer = peerRef.current;
+    try {
+      const offer = await peer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      await peer.setLocalDescription(offer);
+      await sendSignalDual({ type: 'offer', sdp: peer.localDescription });
+      offerSent.current = true;
+      console.log('[WebRTC] Offer sent');
+    } catch (e) {
+      console.error('[WebRTC] Failed to send offer:', e);
+    }
+  }, [sendSignalDual]);
+
   const handleSignal = useCallback(async (data) => {
-    if (!peerRef.current) {
-      if (data.type === 'offer') {
-        await createPeerConnection(false);
-        // Wait for peer to be set, then process offer
-        setTimeout(() => handleSignal(data), 100);
-      }
+    if (data._from === userId) return;
+
+    if (data.type === 'ready') {
+      console.log('[WebRTC] ready received');
+      readyReceived.current = true;
+      if (!offerSent.current) await sendOffer();
       return;
     }
 
-    const peer = peerRef.current;
-    try {
-      if (data.type === 'offer') {
+    if (data.type === 'offer') {
+      console.log('[WebRTC] offer received');
+      if (!peerRef.current) {
+        await createPeerConnection(false);
+        // small delay to let peer be set
+        await new Promise(r => setTimeout(r, 200));
+      }
+      const peer = peerRef.current;
+      if (!peer) return;
+      try {
         await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
         remoteDescSet.current = true;
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
         await sendSignalDual({ type: 'answer', sdp: peer.localDescription });
-      } else if (data.type === 'answer') {
+        console.log('[WebRTC] Answer sent');
+      } catch (e) {
+        console.error('[WebRTC] offer handling error:', e);
+      }
+      return;
+    }
+
+    if (data.type === 'answer') {
+      console.log('[WebRTC] answer received');
+      const peer = peerRef.current;
+      if (!peer) return;
+      try {
         await peer.setRemoteDescription(new RTCSessionDescription(data.sdp));
         remoteDescSet.current = true;
-      } else if (data.type === 'ice') {
-        if (!remoteDescSet.current) {
-          // buffer? not needed since we wait for remote desc first
-          setTimeout(() => handleSignal(data), 200);
-          return;
-        }
-        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (e) {
+        console.error('[WebRTC] answer error:', e);
       }
-    } catch (e) {
-      console.error('[WebRTC] signal error:', e);
+      return;
     }
-  }, [createPeerConnection, sendSignalDual]);
 
-  // Subscribe to broadcast channel (for non-persistent signals)
+    if (data.type === 'ice') {
+      const peer = peerRef.current;
+      if (!peer || !remoteDescSet.current) {
+        // buffer? not needed, just ignore for now
+        return;
+      }
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (e) {}
+      return;
+    }
+
+    if (data.type === 'end') {
+      _cleanup(false);
+      safeSetStatus('ended');
+    }
+  }, [createPeerConnection, sendSignalDual, sendOffer, userId, safeSetStatus]);
+
+  // Poll for existing ready or offer signals on mount (in case the other peer sent while we were not subscribed)
   useEffect(() => {
     if (!sessionId || !userId) return;
+    const checkExisting = async () => {
+      const { data: signals } = await supabase
+        .from('webrtc_signals')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('created_at', { ascending: true });
 
-    const channel = supabase.channel(`webrtc_${sessionId}`);
-    channelRef.current = channel;
-
-    channel
-      .on('broadcast', { event: 'signal' }, (msg) => {
-        const data = msg.payload;
-        if (data._from === userId) return; // ignore own broadcast
-        console.log('[WebRTC] broadcast received:', data.type);
-        handleSignal(data);
-      })
-      .subscribe((s) => {
-        if (s === 'SUBSCRIBED') {
-          console.log('[WebRTC] broadcast channel SUBSCRIBED');
+      if (!signals) return;
+      for (const s of signals) {
+        if (s.sender_id !== userId) {
+          handleSignal(s.data);
         }
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
+      }
     };
+    checkExisting();
   }, [sessionId, userId, handleSignal]);
 
   const startCall = useCallback(async () => {
@@ -214,7 +274,7 @@ export function useWebRTC(sessionId, userId) {
     safeSetStatus('calling');
     setError(null);
 
-    // Determine offerer role
+    // Determine role
     const { data: sess } = await supabase
       .from('video_call_sessions')
       .select('offerer_id')
@@ -224,14 +284,32 @@ export function useWebRTC(sessionId, userId) {
     if (!sess) { setError('Session not found'); safeSetStatus('idle'); return; }
 
     if (!sess.offerer_id) {
+      // Claim offerer
       await supabase.from('video_call_sessions').update({ offerer_id: userId }).eq('id', sessionId).is('offerer_id', null);
       await createPeerConnection(true);
+      // Don't send offer yet – wait for ready signal
     } else if (sess.offerer_id === userId) {
+      // Reconnecting as offerer
       await createPeerConnection(true);
+      // Check if a ready signal already exists (answerer already joined)
+      const { data: existingReady } = await supabase
+        .from('webrtc_signals')
+        .select('id')
+        .eq('session_id', sessionId)
+        .eq('type', 'ready')
+        .maybeSingle();
+      if (existingReady) {
+        readyReceived.current = true;
+        await sendOffer();
+      }
     } else {
+      // Answerer
       await createPeerConnection(false);
+      // Send ready signal
+      await sendSignalDual({ type: 'ready' });
+      console.log('[WebRTC] ready sent');
     }
-  }, [sessionId, userId, safeSetStatus, createPeerConnection]);
+  }, [sessionId, userId, safeSetStatus, createPeerConnection, sendSignalDual, sendOffer]);
 
   const endCall = useCallback(() => {
     _cleanup(true);
