@@ -5,6 +5,8 @@ import GlassCard from '@/shared/components/GlassCard';
 import PageTransition from '@/shared/components/PageTransition';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 
+const GRACE_PERIOD_HOURS = 2; // How long after scheduled time the call remains joinable
+
 export default function StudentCallsPage() {
   const { user } = useAuth();
   const [sessions, setSessions] = useState([]);
@@ -12,29 +14,44 @@ export default function StudentCallsPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    if (!user) return;
     async function fetchSessions() {
       const { data } = await supabase
         .from('video_call_sessions')
         .select('*')
         .eq('student_id', user.id)
         .order('scheduled_at', { ascending: false })
-        .limit(20); // fetch more to filter
+        .limit(20);
 
       if (data) {
         const now = new Date();
-        // Filter out ended and very old sessions
-        const filtered = data.filter(s => {
+        // Keep sessions that are not ended and not too old
+        const filtered = data.filter((s) => {
           if (s.status === 'ended') return false;
           const scheduled = new Date(s.scheduled_at);
-          // Keep sessions that are still joinable (within 2 hours of scheduled time)
-          return scheduled > new Date(now.getTime() - 2 * 60 * 60 * 1000);
+          const deadline = new Date(scheduled.getTime() + GRACE_PERIOD_HOURS * 60 * 60 * 1000);
+          // Show if the session is still within the grace period (or in the future)
+          return now < deadline;
         });
-        setSessions(filtered.slice(0, 5)); // show only 5 most recent
+        setSessions(filtered.slice(0, 5));
       }
       setLoading(false);
     }
-    if (user) fetchSessions();
+    fetchSessions();
   }, [user]);
+
+  const getCallStatus = (s) => {
+    const now = new Date();
+    const scheduled = new Date(s.scheduled_at);
+    const deadline = new Date(scheduled.getTime() + GRACE_PERIOD_HOURS * 60 * 60 * 1000);
+
+    if (s.status === 'ended') return { label: 'Ended', color: 'text-gray-400', joinable: false };
+    if (s.room_ready) return { label: 'Instructor is waiting – join now!', color: 'text-green-600 font-semibold', joinable: true };
+    if (now < scheduled) return { label: 'Scheduled', color: 'text-blue-500', joinable: false };
+    if (now > deadline) return { label: 'Expired', color: 'text-gray-400', joinable: false };
+    // Within grace period, not room_ready yet
+    return { label: 'Ready to join', color: 'text-yellow-600', joinable: true };
+  };
 
   return (
     <PageTransition>
@@ -57,21 +74,28 @@ export default function StudentCallsPage() {
         ) : (
           <div className="space-y-4">
             {sessions.map((s) => {
-              const canJoin = s.status === 'active' || s.room_ready || new Date(s.scheduled_at) <= new Date();
+              const { label, color, joinable } = getCallStatus(s);
               return (
                 <GlassCard key={s.id} className="flex justify-between items-center p-4">
                   <div>
-                    <p className="font-medium">{new Date(s.scheduled_at).toLocaleString()}</p>
-                    <p className={`text-sm ${s.room_ready ? 'text-green-600 font-semibold' : 'text-gray-500'}`}>
-                      {s.room_ready ? 'Instructor is waiting – join now!' : s.status}
+                    <p className="font-medium">
+                      {new Date(s.scheduled_at).toLocaleString([], {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </p>
+                    <p className={`text-sm ${color}`}>{label}</p>
                   </div>
-                  {canJoin && s.status !== 'ended' ? (
-                    <button onClick={() => navigate(`/call/${s.id}`)} className="btn-primary text-sm">
+                  {joinable && (
+                    <button
+                      onClick={() => navigate(`/call/${s.id}`)}
+                      className="btn-primary text-sm"
+                    >
                       {s.room_ready ? 'Join Now' : 'Join Call'}
                     </button>
-                  ) : (
-                    <span className="text-gray-400 text-sm">Expired</span>
                   )}
                 </GlassCard>
               );
