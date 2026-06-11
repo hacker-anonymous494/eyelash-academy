@@ -10,6 +10,7 @@ const navItems = [
   { to: '/admin/chat', label: 'Chat', icon: '💬' },
   { to: '/admin/calls', label: 'Calls', icon: '📞' },
   { to: '/admin/analytics', label: 'Analytics', icon: '📈' },
+  { to: '/admin/settings', label: 'Settings', icon: '⚙️' },
 ];
 
 export default function AdminLayout({ children }) {

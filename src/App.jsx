@@ -41,6 +41,9 @@ const SettingsPage = lazy(() => import('@/features/dashboard/student/SettingsPag
 
 const AdminAnalytics = lazy(() => import('@/features/dashboard/admin/AdminAnalyticsPage'));
 
+const AdminSettings = lazy(() => import('@/features/dashboard/admin/AdminSettingsPage'));
+
+
 import PublicLayout from '@/shared/layouts/PublicLayout';
 
 export default function App() {
@@ -74,6 +77,7 @@ export default function App() {
           <Route path="/admin/chat" element={<AdminChat />} />
           <Route path="/admin/calls" element={<AdminCallsPage />} />
           <Route path="/admin/analytics" element={<AdminAnalytics />} />    
+          <Route path="/admin/settings" element={<AdminSettings />} />
         </Route>
 
         {/* ─── Student protected routes (with sidebar layout) ─── */}
