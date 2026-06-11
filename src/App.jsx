@@ -73,7 +73,7 @@ export default function App() {
           <Route path="/admin/orders" element={<AdminOrders />} />
           <Route path="/admin/chat" element={<AdminChat />} />
           <Route path="/admin/calls" element={<AdminCallsPage />} />
-          <Route path="/admin/analytics" element={<AdminAnalytics />} />
+          <Route path="/admin/analytics" element={<AdminAnalytics />} />    
         </Route>
 
         {/* ─── Student protected routes (with sidebar layout) ─── */}

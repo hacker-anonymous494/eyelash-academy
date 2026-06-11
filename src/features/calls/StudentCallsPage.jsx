@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/config/supabase';
 import GlassCard from '@/shared/components/GlassCard';
 import PageTransition from '@/shared/components/PageTransition';
@@ -27,12 +27,20 @@ export default function StudentCallsPage() {
   return (
     <PageTransition>
       <div className="max-w-4xl mx-auto px-4 py-12">
-        <h2 className="text-3xl font-display font-semibold mb-8">My Calls</h2>
+        <div className="flex justify-between items-center mb-8">
+          <h2 className="text-3xl font-display font-semibold">My Calls</h2>
+          <Link to="/dashboard/book-call" className="btn-primary text-sm">
+            + Book a Call
+          </Link>
+        </div>
         {loading ? (
           <div className="animate-spin h-10 w-10 border-4 border-brand-rose-200 border-t-brand-rose-600 rounded-full" />
         ) : sessions.length === 0 ? (
           <GlassCard className="p-8 text-center">
             <p className="text-gray-500">No scheduled calls.</p>
+            <Link to="/dashboard/book-call" className="btn-primary mt-4 inline-block">
+              Schedule your first session
+            </Link>
           </GlassCard>
         ) : (
           <div className="space-y-4">

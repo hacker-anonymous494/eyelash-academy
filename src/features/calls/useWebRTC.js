@@ -6,6 +6,9 @@ export function useWebRTC(sessionId, userId) {
   const [remoteStream, setRemoteStream] = useState(null);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCamOff, setIsCamOff] = useState(false);
+
   const peerRef = useRef(null);
   const channelRef = useRef(null);
   const streamRef = useRef(null);
@@ -16,23 +19,29 @@ export function useWebRTC(sessionId, userId) {
 
   const createPeer = useCallback(async (asOfferer) => {
     setError(null);
-    // Get media if not already
     if (!streamRef.current) {
       try {
         streamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         setLocalStream(streamRef.current);
       } catch (err) {
-        setError('Camera/microphone access denied. Allow permissions and try again.');
+        setError('Camera or microphone access denied. Please allow permissions.');
         setStatus('idle');
         return false;
       }
     }
     const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     streamRef.current.getTracks().forEach(t => peer.addTrack(t, streamRef.current));
-    peer.onicecandidate = (e) => { if (e.candidate) sendSignal({ type: 'ice', candidate: e.candidate.toJSON() }); };
-    peer.ontrack = (e) => { setRemoteStream(e.streams[0]); setStatus('connected'); };
+    peer.onicecandidate = (e) => {
+      if (e.candidate) sendSignal({ type: 'ice', candidate: e.candidate.toJSON() });
+    };
+    peer.ontrack = (e) => {
+      setRemoteStream(e.streams[0]);
+      setStatus('connected');
+    };
     peer.oniceconnectionstatechange = () => {
-      if (peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') setStatus('ended');
+      if (peer.iceConnectionState === 'disconnected' || peer.iceConnectionState === 'failed') {
+        setStatus('ended');
+      }
     };
     peerRef.current = peer;
     if (asOfferer) {
@@ -63,7 +72,7 @@ export function useWebRTC(sessionId, userId) {
     } catch (e) { console.error(e); }
   }, [createPeer, sendSignal]);
 
-  // Subscribe to signaling channel once
+  // Subscribe to signaling channel
   const subscribe = useCallback(() => {
     const channel = supabase.channel(`webrtc_${sessionId}`);
     channel.on('broadcast', { event: 'signal' }, (payload) => handleSignal(payload.payload)).subscribe();
@@ -71,10 +80,13 @@ export function useWebRTC(sessionId, userId) {
   }, [sessionId, handleSignal]);
 
   const startCall = useCallback(async () => {
-    if (status === 'calling' || status === 'connected') return;
     setStatus('calling');
     if (!channelRef.current) subscribe();
-    const { data: session } = await supabase.from('video_call_sessions').select('offerer_id').eq('id', sessionId).single();
+    const { data: session } = await supabase
+      .from('video_call_sessions')
+      .select('offerer_id')
+      .eq('id', sessionId)
+      .single();
     if (!session) return;
     if (!session.offerer_id) {
       await supabase.from('video_call_sessions').update({ offerer_id: userId }).eq('id', sessionId);
@@ -82,17 +94,29 @@ export function useWebRTC(sessionId, userId) {
     } else {
       await createPeer(false);
     }
-  }, [sessionId, userId, status, createPeer, subscribe]);
+  }, [sessionId, userId, createPeer, subscribe]);
 
   const endCall = useCallback(() => {
-    peerRef.current?.close();
-    peerRef.current = null;
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
+    if (peerRef.current) { peerRef.current.close(); peerRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     setLocalStream(null);
     setRemoteStream(null);
     setStatus('idle');
   }, []);
 
-  return { localStream, remoteStream, status, error, startCall, endCall };
+  const toggleMute = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getAudioTracks().forEach(t => { t.enabled = !t.enabled; });
+      setIsMuted(prev => !prev);
+    }
+  }, []);
+
+  const toggleCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getVideoTracks().forEach(t => { t.enabled = !t.enabled; });
+      setIsCamOff(prev => !prev);
+    }
+  }, []);
+
+  return { localStream, remoteStream, status, error, isMuted, isCamOff, startCall, endCall, toggleMute, toggleCamera };
 }

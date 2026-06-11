@@ -8,9 +8,8 @@ import CallToast from '@/features/calls/CallToast';
 import { S, globalCSS } from '@/features/dashboard/student/dashboardShared.jsx';
 import { supabase } from '@/config/supabase';
 import { sendNotification } from '@/lib/notifications';
-import { activeCallChannels } from '@/shared/components/callChannelGuard';  // adjust path if you created it elsewhere
 
-// ─── Module‑level guard – prevents duplicate realtime subscriptions ────────
+// Module‑level guard – prevents duplicate realtime subscriptions
 const activeCallListeners = new Set();
 
 // ─── Sidebar design tokens ────────────────────────────────────────────────────
@@ -25,7 +24,7 @@ const SB = {
   width: 240,
 };
 
-// ─── Icons (unchanged) ──────────────────────────────────────────────────────
+// ─── Icons ────────────────────────────────────────────────────────────────────
 const Icon = {
   overview: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -372,44 +371,38 @@ export default function StudentLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // ── Realtime call invite listener (global guard) ─────────────────────────
-useEffect(() => {
-  if (!user) return;
-  const channelKey = `call_${user.id}`;
+  useEffect(() => {
+    if (!user) return;
+    const channelKey = `call_${user.id}`;
+    if (activeCallListeners.has(channelKey)) return;
+    activeCallListeners.add(channelKey);
 
-  // Prevent duplicate subscriptions across the whole app
-  if (activeCallChannels.has(channelKey)) return;
-  activeCallChannels.add(channelKey);
-
-  const channel = supabase
-    .channel(channelKey)
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'video_call_sessions',
-        filter: `student_id=eq.${user.id}`,
-      },
-      (payload) => {
-        if (payload.new.room_ready) {
-          sendNotification('Your call is starting!', { body: 'Instructor is waiting.' });
-          window.dispatchEvent(
-            new CustomEvent('call:invite', { detail: { sessionId: payload.new.id } })
-          );
+    const channel = supabase
+      .channel(channelKey)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'video_call_sessions',
+          filter: `student_id=eq.${user.id}`,
+        },
+        (payload) => {
+          if (payload.new.room_ready) {
+            sendNotification('Your call is starting!', { body: 'Instructor is waiting.' });
+            window.dispatchEvent(new CustomEvent('call:invite', { detail: { sessionId: payload.new.id } }));
+          }
         }
-      }
-    )
-    .subscribe((status) => {
-      if (status !== 'SUBSCRIBED') {
-        activeCallChannels.delete(channelKey);
-      }
-    });
+      )
+      .subscribe((status) => {
+        if (status !== 'SUBSCRIBED') activeCallListeners.delete(channelKey);
+      });
 
-  return () => {
-    supabase.removeChannel(channel);
-    activeCallChannels.delete(channelKey);
-  };
-}, [user?.id]);
+    return () => {
+      supabase.removeChannel(channel);
+      activeCallListeners.delete(channelKey);
+    };
+  }, [user?.id]);
 
   // Detect mobile
   useEffect(() => {
@@ -445,6 +438,7 @@ useEffect(() => {
     <>
       <style>{globalCSS}</style>
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: S.canvasBg }}>
+
         {/* ── Desktop sidebar (pushes content) ────────────────────────────── */}
         {!isMobile && (
           <motion.aside
@@ -454,18 +448,14 @@ useEffect(() => {
             style={{
               background: SB.bg,
               borderRight: `1px solid ${SB.border}`,
-              flexShrink: 0,
-              overflow: 'hidden',
+              flexShrink: 0, overflow: 'hidden',
               height: '100vh',
             }}
           >
             <div style={{ width: SB.width }}>
               <SidebarContent
-                profile={profile}
-                user={user}
-                signOut={signOut}
-                location={location}
-                onLinkClick={closeSidebar}
+                profile={profile} user={user} signOut={signOut}
+                location={location} onLinkClick={closeSidebar}
               />
             </div>
           </motion.aside>
@@ -476,42 +466,24 @@ useEffect(() => {
           {isMobile && sidebarOpen && (
             <>
               <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
                 onClick={() => setSidebarOpen(false)}
-                style={{
-                  position: 'fixed',
-                  inset: 0,
-                  background: 'rgba(0,0,0,0.5)',
-                  zIndex: 40,
-                  backdropFilter: 'blur(2px)',
-                }}
+                style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 40, backdropFilter: 'blur(2px)' }}
               />
               <motion.aside
-                initial={{ x: -SB.width }}
-                animate={{ x: 0 }}
-                exit={{ x: -SB.width }}
+                initial={{ x: -SB.width }} animate={{ x: 0 }} exit={{ x: -SB.width }}
                 transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                 style={{
-                  position: 'fixed',
-                  left: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: SB.width,
-                  background: SB.bg,
+                  position: 'fixed', left: 0, top: 0, bottom: 0,
+                  width: SB.width, background: SB.bg,
                   borderRight: `1px solid ${SB.border}`,
-                  zIndex: 50,
-                  overflow: 'hidden',
+                  zIndex: 50, overflow: 'hidden',
                 }}
               >
                 <SidebarContent
-                  profile={profile}
-                  user={user}
-                  signOut={signOut}
-                  location={location}
-                  onLinkClick={closeSidebar}
+                  profile={profile} user={user} signOut={signOut}
+                  location={location} onLinkClick={closeSidebar}
                 />
               </motion.aside>
             </>
@@ -520,54 +492,38 @@ useEffect(() => {
 
         {/* ── Main panel ───────────────────────────────────────────────────── */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-          {/* Desktop collapse toggle + breadcrumb */}
+
+          {/* Desktop collapse toggle */}
           {!isMobile && (
-            <div
-              style={{
-                height: 48,
-                display: 'flex',
-                alignItems: 'center',
-                padding: '0 20px',
-                gap: 16,
-                borderBottom: '1px solid rgba(200,64,112,0.08)',
-                background: 'rgba(250,248,247,0.92)',
-                backdropFilter: 'blur(10px)',
-                flexShrink: 0,
-              }}
-            >
+            <div style={{
+              height: 48, display: 'flex', alignItems: 'center',
+              padding: '0 20px', gap: 16,
+              borderBottom: '1px solid rgba(200,64,112,0.08)',
+              background: 'rgba(250,248,247,0.92)', backdropFilter: 'blur(10px)',
+              flexShrink: 0,
+            }}>
               <button
                 onClick={() => setSidebarOpen(o => !o)}
                 title="Toggle sidebar  [ "
                 style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: S.textMuted,
-                  padding: 4,
-                  display: 'flex',
-                  borderRadius: 6,
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: S.textMuted, padding: 4, display: 'flex', borderRadius: 6,
                   transition: 'color 0.15s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.color = S.rose)}
-                onMouseLeave={e => (e.currentTarget.style.color = S.textMuted)}
+                onMouseEnter={e => e.currentTarget.style.color = S.rose}
+                onMouseLeave={e => e.currentTarget.style.color = S.textMuted}
               >
                 {Icon.menu}
               </button>
+              {/* Breadcrumb */}
               <RouteBreadcrumb location={location} />
               <div style={{ flex: 1 }} />
-              <button
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: S.textMuted,
-                  padding: 6,
-                  display: 'flex',
-                  borderRadius: 8,
-                  transition: 'color 0.15s',
-                  position: 'relative',
-                }}
-              >
+              {/* Bell placeholder */}
+              <button style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: S.textMuted, padding: 6, display: 'flex', borderRadius: 8,
+                transition: 'color 0.15s', position: 'relative',
+              }}>
                 {Icon.bell}
               </button>
             </div>
@@ -575,11 +531,7 @@ useEffect(() => {
 
           {/* Mobile topbar */}
           {isMobile && (
-            <MobileTopbar
-              onOpenSidebar={() => setSidebarOpen(true)}
-              profile={profile}
-              user={user}
-            />
+            <MobileTopbar onOpenSidebar={() => setSidebarOpen(true)} profile={profile} user={user} />
           )}
 
           {/* Page content */}
