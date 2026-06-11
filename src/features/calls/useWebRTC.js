@@ -124,6 +124,7 @@ export function useWebRTC(sessionId, userId) {
 
     const peer = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     peerRef.current = peer; // set synchronously before any async work
+    console.log('[WebRTC] createPeerConnection, asOfferer:', asOfferer, 'peer created'); // ADDED LOG
     remoteDescSet.current = false;
     iceCandidateQueue.current = [];
 
@@ -174,10 +175,13 @@ export function useWebRTC(sessionId, userId) {
     }
 
     return peer;
-  }, [sendSignal, safeSetStatus, drainQueue]);
+  }, [sendSignal, safeSetStatus]);
 
   // ── Handle incoming signal — assigned to ref so channel always has latest ──
   const handleSignal = useCallback(async (data) => {
+    // ADDED LOG for incoming signals
+    console.log('[WebRTC] handleSignal received:', data.type, 'from:', data._from, 'my id:', userId);
+
     // KEY FIX #3: ignore our own echoed signals
     if (data._from === userId) return;
 
@@ -301,21 +305,23 @@ export function useWebRTC(sessionId, userId) {
 
   // ── Public API ────────────────────────────────────────────────────────────
   const startCall = useCallback(async () => {
+    console.log('[WebRTC] startCall called, current status:', statusRef.current); // ADDED LOG
     if (statusRef.current === 'calling' || statusRef.current === 'connected') return;
     safeSetStatus('calling');
     setError(null);
 
     // Wait up to 3s for signaling channel
     if (!signalingReady.current) {
+      console.log('[WebRTC] Waiting for signaling channel…'); // ADDED LOG
       await new Promise(resolve => {
         const check = setInterval(() => {
           if (signalingReady.current) { clearInterval(check); resolve(); }
         }, 100);
         setTimeout(() => { clearInterval(check); resolve(); }, 3000);
       });
+      console.log('[WebRTC] Signaling channel ready:', signalingReady.current); // ADDED LOG
     }
 
-    // Atomically claim offerer role
     const { data: sess } = await supabase
       .from('video_call_sessions')
       .select('offerer_id')
@@ -324,8 +330,9 @@ export function useWebRTC(sessionId, userId) {
 
     if (!sess) { setError('Session not found.'); safeSetStatus('idle'); return; }
 
+    console.log('[WebRTC] offerer_id:', sess.offerer_id, 'my user:', userId); // ADDED LOG
+
     if (!sess.offerer_id) {
-      // Try to claim offerer atomically
       const { error: claimErr } = await supabase
         .from('video_call_sessions')
         .update({ offerer_id: userId })
@@ -333,15 +340,20 @@ export function useWebRTC(sessionId, userId) {
         .is('offerer_id', null);
 
       if (!claimErr) {
-        await createPeerConnection(true); // we are offerer
+        console.log('[WebRTC] I am offerer'); // ADDED LOG
+        await createPeerConnection(true);
       } else {
-        await createPeerConnection(false); // someone else claimed first
+        console.log('[WebRTC] Someone else claimed offerer, I am answerer'); // ADDED LOG
+        await createPeerConnection(false);
       }
     } else if (sess.offerer_id === userId) {
-      await createPeerConnection(true); // we were already offerer (reconnect)
+      console.log('[WebRTC] I was already offerer (reconnect)'); // ADDED LOG
+      await createPeerConnection(true);
     } else {
-      await createPeerConnection(false); // we are answerer
+      console.log('[WebRTC] I am answerer'); // ADDED LOG
+      await createPeerConnection(false);
     }
+    console.log('[WebRTC] startCall completed'); // ADDED LOG
   }, [sessionId, userId, safeSetStatus, createPeerConnection]);
 
   const endCall = useCallback(() => {

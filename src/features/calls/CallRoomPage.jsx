@@ -457,7 +457,7 @@ export default function CallRoomPage() {
   // ── When user clicks "Allow & Join" ───────────────────────────────────────
   const handleJoin = useCallback(async () => {
     if (joining) return;
-    console.log('[CallRoom] handleJoin clicked');
+    console.log('[CallRoom] handleJoin clicked');   // ADDED DEBUG LOG
     setJoining(true);
     setPermissionError(null);
 
