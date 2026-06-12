@@ -1,16 +1,197 @@
+/**
+ * AdminCourseEditorPage.jsx
+ * Full course editor — preserves all original functionality,
+ * redesigned with the new admin design system.
+ */
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/config/supabase';
 import AdminLayout from './AdminLayout';
-import GlassCard from '@/shared/components/GlassCard';
-import PrimaryButton from '@/shared/components/PrimaryButton';
+import { A, Card, Btn, Field, Input, Select, Toast, PageHeader, Spinner } from './adminShared.jsx';
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const tasksToText = tasks => (Array.isArray(tasks) ? tasks : []).join('\n');
+const tasksFromText = t => t.split('\n').map(s => s.trim()).filter(Boolean);
+const linksToText = links => (Array.isArray(links) ? links : []).map(l => typeof l === 'string' ? l : `${l.label || ''}|${l.url || ''}`).join('\n');
+const linksFromText = t => t.split('\n').map(s => s.trim()).filter(Boolean).map(s => {
+  const [label, url] = s.split('|');
+  return url ? { label: label.trim(), url: url.trim() } : s;
+});
+const newLesson = (pos) => ({ id: `new_${Date.now()}_${pos}`, title: 'Untitled Lesson', video_url: null, duration_seconds: 0, free_preview: false, position: pos, summary: '', tasks: [], helpful_links: [], quizzes: [] });
+const newQuestion = () => ({ id: `nq_${Date.now()}`, question_text: '', options: ['', '', '', ''], correct_option_index: 0 });
+
+// ─── Section wrapper ──────────────────────────────────────────────────────────
+function Section({ title, children, collapsible = false, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card style={{ overflow: 'hidden', marginBottom: 16 }}>
+      <button onClick={() => collapsible && setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '16px 20px', background: 'rgba(200,64,112,0.03)', border: 'none',
+        borderBottom: open ? `1px solid ${A.cardBorder}` : 'none', cursor: collapsible ? 'pointer' : 'default',
+        fontFamily: A.fontDisplay, fontSize: 18, fontWeight: 600, color: A.textPrimary,
+      }}>
+        {title}
+        {collapsible && <span style={{ fontSize: 16, color: A.textMuted, transition: 'transform 0.2s', display: 'flex', transform: open ? 'rotate(180deg)' : 'none' }}>▾</span>}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.25 }} style={{ overflow: 'hidden' }}>
+            <div style={{ padding: '20px' }}>{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Card>
+  );
+}
+
+// ─── Question editor ──────────────────────────────────────────────────────────
+function QuestionEditor({ q, qIdx, onUpdate, onRemove }) {
+  return (
+    <div style={{ background: 'rgba(200,64,112,0.03)', border: `1px solid ${A.roseBorder}`, borderRadius: 10, padding: '14px 16px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 10 }}>
+        <span style={{ fontFamily: A.fontBody, fontSize: 11, fontWeight: 700, color: A.textMuted, flexShrink: 0, marginTop: 12 }}>Q{qIdx + 1}</span>
+        <Input value={q.question_text} onChange={e => onUpdate('question_text', e.target.value)} placeholder={`Question ${qIdx + 1}`} />
+        <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: A.red, fontSize: 18, lineHeight: 1, flexShrink: 0, marginTop: 8 }}>×</button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7, paddingLeft: 28 }}>
+        {q.options.map((opt, optIdx) => (
+          <div key={optIdx} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input type="radio" name={`q_${q.id}_correct`} checked={q.correct_option_index === optIdx} onChange={() => onUpdate('correct_option_index', optIdx)}
+              style={{ accentColor: A.rose, flexShrink: 0 }} />
+            <input value={opt} onChange={e => { const opts = [...q.options]; opts[optIdx] = e.target.value; onUpdate('options', opts); }}
+              placeholder={`Option ${optIdx + 1}${optIdx === 0 ? ' (select radio = correct answer)' : ''}`}
+              style={{ flex: 1, fontFamily: A.fontBody, fontSize: 13, color: A.textPrimary, background: 'white', border: `1px solid ${A.cardBorder}`, borderRadius: 7, padding: '6px 10px', outline: 'none' }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Lesson editor ────────────────────────────────────────────────────────────
+function LessonEditor({ lesson, lessonIdx, modIdx, onUpdate, onRemove, onVideoUpload, uploading }) {
+  const [openSection, setOpenSection] = useState('main');
+
+  const updateQ = (quizIdx, qIdx, field, val) => {
+    const q = JSON.parse(JSON.stringify(lesson.quizzes));
+    q[quizIdx].quiz_questions[qIdx][field] = val;
+    onUpdate('quizzes', q);
+  };
+  const removeQ = (quizIdx, qIdx) => {
+    const q = JSON.parse(JSON.stringify(lesson.quizzes));
+    q[quizIdx].quiz_questions.splice(qIdx, 1);
+    onUpdate('quizzes', q);
+  };
+  const addQ = (quizIdx) => {
+    const q = JSON.parse(JSON.stringify(lesson.quizzes));
+    q[quizIdx].quiz_questions.push(newQuestion());
+    onUpdate('quizzes', q);
+  };
+  const addQuiz = () => {
+    onUpdate('quizzes', [{ id: `nquiz_${Date.now()}`, pass_percentage: 70, quiz_questions: [newQuestion()] }]);
+  };
+
+  const tabs = [
+    { key: 'main', label: 'Details' },
+    { key: 'content', label: 'Content' },
+    { key: 'quiz', label: `Quiz ${lesson.quizzes?.length ? '✓' : ''}` },
+  ];
+
+  return (
+    <div style={{ background: 'white', border: `1px solid ${A.cardBorder}`, borderRadius: 12, overflow: 'hidden', marginBottom: 10 }}>
+      {/* Lesson header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: 'rgba(200,64,112,0.03)', borderBottom: `1px solid ${A.cardBorder}` }}>
+        <span style={{ fontFamily: A.fontBody, fontSize: 11, fontWeight: 700, color: A.textMuted, flexShrink: 0 }}>#{lessonIdx + 1}</span>
+        <input value={lesson.title} onChange={e => onUpdate('title', e.target.value)}
+          style={{ flex: 1, fontFamily: A.fontBody, fontSize: 14, fontWeight: 600, color: A.textPrimary, background: 'none', border: 'none', outline: 'none' }}
+          placeholder="Lesson title" />
+        {lesson.video_url && <span style={{ fontFamily: A.fontBody, fontSize: 11, color: A.green, flexShrink: 0 }}>✓ Video</span>}
+        <label style={{ cursor: 'pointer', flexShrink: 0 }}>
+          <span style={{ fontFamily: A.fontBody, fontSize: 11, color: A.blue, border: `1px solid ${A.blue}22`, borderRadius: 100, padding: '3px 10px' }}>
+            {uploading ? '...' : '↑ Video'}
+          </span>
+          <input type="file" accept="video/*" onChange={e => onVideoUpload(e.target.files[0])} style={{ display: 'none' }} />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: A.fontBody, fontSize: 11, color: A.textMuted, cursor: 'pointer', flexShrink: 0 }}>
+          <input type="checkbox" checked={lesson.free_preview} onChange={e => onUpdate('free_preview', e.target.checked)} style={{ accentColor: A.rose }} /> Free
+        </label>
+        <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: A.red, fontSize: 18, lineHeight: 1, flexShrink: 0 }}>×</button>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', borderBottom: `1px solid ${A.cardBorder}` }}>
+        {tabs.map(tab => (
+          <button key={tab.key} onClick={() => setOpenSection(tab.key)} style={{
+            flex: 1, padding: '8px 0', border: 'none', background: 'transparent', cursor: 'pointer',
+            fontFamily: A.fontBody, fontSize: 12, fontWeight: 500,
+            color: openSection === tab.key ? A.rose : A.textMuted,
+            borderBottom: openSection === tab.key ? `2px solid ${A.rose}` : '2px solid transparent',
+          }}>{tab.label}</button>
+        ))}
+      </div>
+
+      <div style={{ padding: '14px 16px' }}>
+        {openSection === 'main' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field label="Duration (seconds)">
+              <Input type="number" value={lesson.duration_seconds || 0} onChange={e => onUpdate('duration_seconds', parseInt(e.target.value) || 0)} />
+            </Field>
+            <Field label="Position">
+              <Input type="number" value={lesson.position} onChange={e => onUpdate('position', parseInt(e.target.value) || 0)} />
+            </Field>
+          </div>
+        )}
+        {openSection === 'content' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Field label="Summary">
+              <Input value={lesson.summary || ''} onChange={e => onUpdate('summary', e.target.value)} rows={3} placeholder="Brief lesson summary…" />
+            </Field>
+            <Field label="Tasks" hint="One per line">
+              <Input value={tasksToText(lesson.tasks)} onChange={e => onUpdate('tasks', tasksFromText(e.target.value))} rows={3} placeholder="Watch video&#10;Take notes&#10;Complete quiz" style={{ fontFamily: A.fontMono, fontSize: 12 }} />
+            </Field>
+            <Field label="Helpful Links" hint="Format: Label|URL or just URL, one per line">
+              <Input value={linksToText(lesson.helpful_links)} onChange={e => onUpdate('helpful_links', linksFromText(e.target.value))} rows={2} placeholder="Official Docs|https://...&#10;https://example.com" style={{ fontFamily: A.fontMono, fontSize: 12 }} />
+            </Field>
+          </div>
+        )}
+        {openSection === 'quiz' && (
+          <div>
+            {!lesson.quizzes?.length ? (
+              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                <p style={{ fontFamily: A.fontBody, fontSize: 13, color: A.textMuted, marginBottom: 12 }}>No quiz for this lesson yet.</p>
+                <Btn variant="ghost" size="sm" onClick={addQuiz}>+ Add Quiz</Btn>
+              </div>
+            ) : lesson.quizzes.map((quiz, quizIdx) => (
+              <div key={quiz.id || quizIdx}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                  <Field label="Pass %">
+                    <input type="number" value={quiz.pass_percentage} min={0} max={100}
+                      onChange={e => { const q = JSON.parse(JSON.stringify(lesson.quizzes)); q[quizIdx].pass_percentage = parseInt(e.target.value) || 70; onUpdate('quizzes', q); }}
+                      style={{ width: 72, fontFamily: A.fontBody, fontSize: 13, border: `1px solid ${A.cardBorder}`, borderRadius: 8, padding: '7px 10px', outline: 'none' }} />
+                  </Field>
+                  <button onClick={() => onUpdate('quizzes', [])} style={{ background: 'none', border: 'none', cursor: 'pointer', color: A.red, fontFamily: A.fontBody, fontSize: 12 }}>Remove Quiz</button>
+                </div>
+                {(quiz.quiz_questions || []).map((q, qIdx) => (
+                  <QuestionEditor key={q.id || qIdx} q={q} qIdx={qIdx} onUpdate={(f, v) => updateQ(quizIdx, qIdx, f, v)} onRemove={() => removeQ(quizIdx, qIdx)} />
+                ))}
+                <Btn variant="ghost" size="sm" onClick={() => addQ(quizIdx)}>+ Add Question</Btn>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── AdminCourseEditorPage ────────────────────────────────────────────────────
 export default function AdminCourseEditorPage() {
   const { id } = useParams();
   const isNew = id === 'new';
   const navigate = useNavigate();
 
-  // Course fields
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [description, setDescription] = useState('');
@@ -18,270 +199,91 @@ export default function AdminCourseEditorPage() {
   const [status, setStatus] = useState('draft');
   const [modules, setModules] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [uploading, setUploading] = useState({}); // { `${modIdx}_${lessonIdx}`: bool }
   const [loadedCourseId, setLoadedCourseId] = useState(null);
 
-  // Load existing course
   useEffect(() => {
     if (!isNew) {
-      const fetchCourse = async () => {
-        const { data: course, error } = await supabase
-          .from('courses')
-          .select('*')
-          .eq('id', id)
-          .single();
-        if (error) {
-          console.error('Error fetching course:', error);
-          return;
-        }
+      supabase.from('courses').select('*').eq('id', id).single().then(({ data: course }) => {
         if (course) {
-          setTitle(course.title);
-          setSlug(course.slug);
-          setDescription(course.description || '');
-          setPrice((course.price_cents / 100).toString());
-          setStatus(course.status);
-          setLoadedCourseId(course.id);
-
-          // Fetch modules with lessons and quizzes
-          const { data: mods } = await supabase
-            .from('modules')
-            .select('*, lessons(*, quizzes(*, quiz_questions(*)))')
-            .eq('course_id', id)
-            .order('position');
-
-          // Ensure each lesson has default empty arrays for tasks and links if missing
-          const normalizedMods = (mods || []).map(mod => ({
-            ...mod,
-            lessons: (mod.lessons || []).map(lesson => ({
-              ...lesson,
-              tasks: lesson.tasks || [],
-              helpful_links: lesson.helpful_links || [],
-              summary: lesson.summary || '',
-            })),
-          }));
-          setModules(normalizedMods);
+          setTitle(course.title); setSlug(course.slug); setDescription(course.description || '');
+          setPrice((course.price_cents / 100).toString()); setStatus(course.status); setLoadedCourseId(course.id);
+          supabase.from('modules').select('*, lessons(*, quizzes(*, quiz_questions(*)))').eq('course_id', id).order('position').then(({ data: mods }) => {
+            setModules((mods || []).map(m => ({ ...m, lessons: (m.lessons || []).sort((a, b) => a.position - b.position).map(l => ({ ...l, summary: l.summary || '', tasks: l.tasks || [], helpful_links: l.helpful_links || [], quizzes: l.quizzes || [] })) })));
+          });
         }
-      };
-      fetchCourse();
+      });
     }
   }, [id, isNew]);
 
-  // Slug auto‑generation
   useEffect(() => {
-    if (!slug && title) {
-      setSlug(title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
-    }
+    if (!slug && title) setSlug(title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
   }, [title, slug]);
 
-  // Save course info
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
+
   const saveCourse = async () => {
-    setSaving(true);
-    const courseData = {
-      title,
-      slug,
-      description,
-      price_cents: Math.round(parseFloat(price) * 100),
-      status,
-    };
-
-    let courseId = loadedCourseId || id;
+    const courseData = { title, slug, description, price_cents: Math.round(parseFloat(price) * 100) || 0, status };
     if (isNew) {
-      const { data } = await supabase.from('courses').insert(courseData).select('id').single();
-      courseId = data.id;
-      setLoadedCourseId(courseId);
-      navigate(`/admin/courses/${courseId}`, { replace: true });
+      const { data, error } = await supabase.from('courses').insert(courseData).select().single();
+      if (error) throw error;
+      setLoadedCourseId(data.id);
+      navigate(`/admin/courses/${data.id}`, { replace: true });
+      return data.id;
     } else {
-      await supabase.from('courses').update(courseData).eq('id', courseId);
+      const { error } = await supabase.from('courses').update(courseData).eq('id', id);
+      if (error) throw error;
+      return id;
     }
-    setSaving(false);
-    return courseId;
   };
 
-  // Add module
-  const addModule = () => {
-    setModules([...modules, { id: `temp-${Date.now()}`, title: 'New Module', position: modules.length, lessons: [] }]);
-  };
-
-  // Update module title
-  const updateModule = (idx, field, value) => {
-    const updated = [...modules];
-    updated[idx][field] = value;
-    setModules(updated);
-  };
-
-  // Remove module
-  const removeModule = (idx) => {
-    const updated = [...modules];
-    updated.splice(idx, 1);
-    setModules(updated);
-  };
-
-  // Add lesson to a module
-  const addLesson = (modIdx) => {
-    const updated = [...modules];
-    updated[modIdx].lessons = [
-      ...updated[modIdx].lessons,
-      {
-        id: `temp-${Date.now()}-${Math.random()}`,
-        title: 'New Lesson',
-        video_url: '',
-        summary: '',
-        tasks: [],
-        helpful_links: [],
-        position: updated[modIdx].lessons.length,
-        quizzes: [],
-      },
-    ];
-    setModules(updated);
-  };
-
-  // Update lesson field
-  const updateLesson = (modIdx, lessonIdx, field, value) => {
-    const updated = [...modules];
-    updated[modIdx].lessons[lessonIdx][field] = value;
-    setModules(updated);
-  };
-
-  // Remove lesson
-  const removeLesson = (modIdx, lessonIdx) => {
-    const updated = [...modules];
-    updated[modIdx].lessons.splice(lessonIdx, 1);
-    setModules(updated);
-  };
-
-  // Upload video
-  const handleVideoUpload = async (modIdx, lessonIdx, file) => {
-    if (!file) return;
-    const filePath = `course-${loadedCourseId || 'new'}/${Date.now()}-${file.name}`;
-    const { error } = await supabase.storage.from('course-videos').upload(filePath, file, { upsert: true });
-    if (error) {
-      alert('Upload failed: ' + error.message);
-      return;
-    }
-    const { data } = supabase.storage.from('course-videos').getPublicUrl(filePath);
-    updateLesson(modIdx, lessonIdx, 'video_url', data.publicUrl);
-  };
-
-  // ─── Quiz helpers ────────────────────────────────────
-  const ensureQuiz = (modIdx, lessonIdx) => {
-    const updated = [...modules];
-    const lesson = updated[modIdx].lessons[lessonIdx];
-    if (!lesson.quizzes || lesson.quizzes.length === 0) {
-      lesson.quizzes = [{
-        id: `temp-quiz-${Date.now()}`,
-        pass_percentage: 70,
-        quiz_questions: [],
-      }];
-    }
-    setModules(updated);
-  };
-
-  const updateQuiz = (modIdx, lessonIdx, quizIdx, field, value) => {
-    const updated = [...modules];
-    updated[modIdx].lessons[lessonIdx].quizzes[quizIdx][field] = value;
-    setModules(updated);
-  };
-
-  const addQuestion = (modIdx, lessonIdx, quizIdx) => {
-    const updated = [...modules];
-    const quiz = updated[modIdx].lessons[lessonIdx].quizzes[quizIdx];
-    quiz.quiz_questions.push({
-      id: `temp-q-${Date.now()}`,
-      question_text: '',
-      options: ['', '', '', ''],
-      correct_option_index: 0,
-    });
-    setModules(updated);
-  };
-
-  const updateQuestion = (modIdx, lessonIdx, quizIdx, qIdx, field, value) => {
-    const updated = [...modules];
-    const q = updated[modIdx].lessons[lessonIdx].quizzes[quizIdx].quiz_questions[qIdx];
-    if (field === 'options') {
-      q.options = value;
-    } else {
-      q[field] = value;
-    }
-    setModules(updated);
-  };
-
-  const removeQuestion = (modIdx, lessonIdx, quizIdx, qIdx) => {
-    const updated = [...modules];
-    updated[modIdx].lessons[lessonIdx].quizzes[quizIdx].quiz_questions.splice(qIdx, 1);
-    setModules(updated);
-  };
-
-  // Save modules, lessons, and quizzes (including summary, tasks, helpful_links)
   const saveModulesAndLessons = async (courseId) => {
-    // Delete existing modules (and cascade will remove lessons/quizzes)
-    if (!isNew) {
-      const { data: existingModules } = await supabase
-        .from('modules')
-        .select('id')
-        .eq('course_id', courseId);
-      const ids = existingModules?.map(m => m.id) || [];
-      if (ids.length > 0) {
-        await supabase.from('lessons').delete().in('module_id', ids);
-        await supabase.from('modules').delete().eq('course_id', courseId);
+    for (let mi = 0; mi < modules.length; mi++) {
+      const mod = modules[mi];
+      let modId = mod.id;
+      if (String(modId).startsWith('new_')) {
+        const { data: nm } = await supabase.from('modules').insert({ course_id: courseId, title: mod.title, position: mi }).select().single();
+        modId = nm.id;
+        const updated = [...modules]; updated[mi] = { ...updated[mi], id: modId }; setModules(updated);
+      } else {
+        await supabase.from('modules').update({ title: mod.title, position: mi }).eq('id', modId);
       }
-    }
-
-    for (const [modIdx, mod] of modules.entries()) {
-      // Insert module
-      const { data: modData } = await supabase
-        .from('modules')
-        .insert({
-          course_id: courseId,
-          title: mod.title,
-          position: modIdx,
-        })
-        .select('id')
-        .single();
-
-      if (mod.lessons.length > 0) {
-        for (const [lIdx, lesson] of mod.lessons.entries()) {
-          // Prepare tasks and helpful_links as JSON
-          const tasksJson = lesson.tasks || [];
-          const helpfulLinksJson = lesson.helpful_links || [];
-
-          // Insert lesson with new fields
-          const { data: lessonData } = await supabase
-            .from('lessons')
-            .insert({
-              module_id: modData.id,
-              title: lesson.title,
-              video_url: lesson.video_url,
-              summary: lesson.summary || '',
-              tasks: tasksJson,
-              helpful_links: helpfulLinksJson,
-              position: lIdx,
-              has_quiz: lesson.quizzes && lesson.quizzes.length > 0,
-            })
-            .select('id')
-            .single();
-
-          // Insert quiz if exists
-          if (lesson.quizzes && lesson.quizzes.length > 0) {
-            for (const quiz of lesson.quizzes) {
-              const { data: quizData } = await supabase
-                .from('quizzes')
-                .insert({
-                  lesson_id: lessonData.id,
-                  pass_percentage: quiz.pass_percentage || 70,
-                })
-                .select('id')
-                .single();
-
-              // Insert questions
-              if (quiz.quiz_questions && quiz.quiz_questions.length > 0) {
-                await supabase.from('quiz_questions').insert(
-                  quiz.quiz_questions.map(q => ({
-                    quiz_id: quizData.id,
-                    question_text: q.question_text,
-                    options: q.options,
-                    correct_option_index: q.correct_option_index,
-                  }))
-                );
-              }
+      for (let li = 0; li < (mod.lessons || []).length; li++) {
+        const lesson = mod.lessons[li];
+        const lessonData = { module_id: modId, title: lesson.title, video_url: lesson.video_url, duration_seconds: lesson.duration_seconds || 0, free_preview: lesson.free_preview || false, position: li, summary: lesson.summary || '', tasks: lesson.tasks || [], helpful_links: lesson.helpful_links || [] };
+        let lessonId = lesson.id;
+        if (String(lessonId).startsWith('new_')) {
+          const { data: nl } = await supabase.from('lessons').insert(lessonData).select().single();
+          lessonId = nl.id;
+        } else {
+          await supabase.from('lessons').update(lessonData).eq('id', lessonId);
+        }
+        // Save quiz
+        if (lesson.quizzes?.length) {
+          const quiz = lesson.quizzes[0];
+          let quizId = quiz.id;
+          if (String(quizId).startsWith('nquiz_')) {
+            const { data: nq } = await supabase.from('quizzes').insert({ lesson_id: lessonId, pass_percentage: quiz.pass_percentage }).select().single();
+            quizId = nq.id;
+          } else {
+            await supabase.from('quizzes').update({ pass_percentage: quiz.pass_percentage }).eq('id', quizId);
+          }
+          for (const q of (quiz.quiz_questions || [])) {
+            const qData = { quiz_id: quizId, question_text: q.question_text, options: q.options, correct_option_index: q.correct_option_index };
+            if (String(q.id).startsWith('nq_')) {
+              await supabase.from('quiz_questions').insert(qData);
+            } else {
+              await supabase.from('quiz_questions').update(qData).eq('id', q.id);
+            }
+          }
+        } else if (!String(lesson.id).startsWith('new_')) {
+          // Remove existing quiz if lesson has quizzes=[]]
+          const { data: existingQ } = await supabase.from('quizzes').select('id').eq('lesson_id', lessonId);
+          if (existingQ?.length) {
+            for (const eq of existingQ) {
+              await supabase.from('quiz_questions').delete().eq('quiz_id', eq.id);
+              await supabase.from('quizzes').delete().eq('id', eq.id);
             }
           }
         }
@@ -290,234 +292,121 @@ export default function AdminCourseEditorPage() {
   };
 
   const handleSaveAll = async () => {
-    const courseId = await saveCourse();
-    if (!courseId) return;
-    await saveModulesAndLessons(courseId);
-    alert('Course saved successfully!');
-    navigate(`/admin/courses/${courseId}`);
+    if (!title || !slug || !price) { showToast('Title, slug, and price are required.', 'error'); return; }
+    setSaving(true);
+    try {
+      const cId = await saveCourse();
+      if (!isNew || loadedCourseId) await saveModulesAndLessons(cId || loadedCourseId);
+      showToast('Course saved successfully! ✓');
+    } catch (err) {
+      showToast(`Save failed: ${err.message}`, 'error');
+    }
+    setSaving(false);
   };
 
-  // Helper for tasks textarea -> array
-  const tasksToText = (tasksArray) => (tasksArray || []).join('\n');
-  const tasksFromText = (text) => text.split(/\r?\n/).filter(line => line.trim().length > 0);
+  const handleVideoUpload = async (modIdx, lessonIdx, file) => {
+    if (!file) return;
+    const key = `${modIdx}_${lessonIdx}`;
+    setUploading(p => ({ ...p, [key]: true }));
+    try {
+      const path = `course-videos/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { error: uploadErr } = await supabase.storage.from('course-videos').upload(path, file, { contentType: file.type });
+      if (uploadErr) throw uploadErr;
+      const { data: { publicUrl } } = supabase.storage.from('course-videos').getPublicUrl(path);
+      const updated = [...modules];
+      updated[modIdx].lessons[lessonIdx].video_url = publicUrl;
+      setModules(updated);
+      showToast('Video uploaded!');
+    } catch (err) { showToast(`Upload failed: ${err.message}`, 'error'); }
+    setUploading(p => ({ ...p, [key]: false }));
+  };
 
-  // Helper for links textarea -> array of {label, url}
-  const linksToText = (linksArray) => {
-    return (linksArray || []).map(link => link.label && link.label !== link.url ? `${link.label}|${link.url}` : link.url).join('\n');
+  const addModule = () => {
+    setModules(p => [...p, { id: `new_${Date.now()}`, title: 'New Module', position: p.length, lessons: [] }]);
   };
-  const linksFromText = (text) => {
-    const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
-    return lines.map(line => {
-      const pipeIndex = line.indexOf('|');
-      if (pipeIndex !== -1) {
-        return { label: line.slice(0, pipeIndex).trim(), url: line.slice(pipeIndex + 1).trim() };
-      }
-      return { label: line.trim(), url: line.trim() };
-    });
-  };
+  const removeModule = (mi) => setModules(p => p.filter((_, i) => i !== mi));
+  const updateModule = (mi, field, val) => setModules(p => p.map((m, i) => i === mi ? { ...m, [field]: val } : m));
+  const addLesson = (mi) => setModules(p => p.map((m, i) => i === mi ? { ...m, lessons: [...m.lessons, newLesson(m.lessons.length)] } : m));
+  const removeLesson = (mi, li) => setModules(p => p.map((m, i) => i === mi ? { ...m, lessons: m.lessons.filter((_, j) => j !== li) } : m));
+  const updateLesson = (mi, li, field, val) => setModules(p => p.map((m, i) => i === mi ? { ...m, lessons: m.lessons.map((l, j) => j === li ? { ...l, [field]: val } : l) } : m));
 
   return (
     <AdminLayout>
-      <h2 className="text-3xl font-display font-semibold mb-6">{isNew ? 'New Course' : 'Edit Course'}</h2>
-
-      {/* Course info */}
-      <GlassCard className="p-6 mb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Title</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Slug</label>
-            <input value={slug} onChange={(e) => setSlug(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Price ($)</label>
-            <input type="number" value={price} onChange={(e) => setPrice(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Status</label>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full border rounded-lg px-3 py-2">
-              <option value="draft">Draft</option>
-              <option value="published">Published</option>
-            </select>
-          </div>
-        </div>
-        <div className="mt-4">
-          <label className="block text-sm font-medium mb-1">Description</label>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="w-full border rounded-lg px-3 py-2" />
-        </div>
-      </GlassCard>
-
-      {/* Modules & Lessons & Quizzes */}
-      <div className="space-y-6">
-        {modules.map((mod, modIdx) => (
-          <GlassCard key={mod.id} className="p-6">
-            <div className="flex gap-2 items-center mb-4">
-              <input
-                value={mod.title}
-                onChange={(e) => updateModule(modIdx, 'title', e.target.value)}
-                className="font-semibold border rounded-lg px-3 py-1 flex-1"
-                placeholder="Module Title"
-              />
-              <button onClick={() => addLesson(modIdx)} className="btn-ghost text-xs px-2 py-1">+ Lesson</button>
-              <button onClick={() => removeModule(modIdx)} className="text-red-500 text-sm">Delete</button>
+      <div style={{ maxWidth: 900, margin: '0 auto' }}>
+        <PageHeader
+          title={isNew ? 'New Course' : 'Edit Course'}
+          subtitle={isNew ? 'Create a new course with modules, lessons, and quizzes.' : `Editing: ${title}`}
+          action={
+            <div style={{ display: 'flex', gap: 10 }}>
+              <Btn variant="ghost" onClick={() => navigate('/admin/courses')}>Cancel</Btn>
+              <Btn variant="primary" onClick={handleSaveAll} loading={saving}>
+                {saving ? 'Saving…' : '✓ Save Course'}
+              </Btn>
             </div>
-            <div className="space-y-3 ml-4">
-              {mod.lessons.map((lesson, lessonIdx) => (
-                <div key={lesson.id} className="border rounded-lg p-4 space-y-4 bg-white/50">
-                  <div className="flex flex-wrap gap-2 items-center justify-between">
-                    <input
-                      value={lesson.title}
-                      onChange={(e) => updateLesson(modIdx, lessonIdx, 'title', e.target.value)}
-                      className="border rounded px-2 py-1 flex-1 min-w-[200px]"
-                      placeholder="Lesson title"
-                    />
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        accept="video/*"
-                        onChange={(e) => handleVideoUpload(modIdx, lessonIdx, e.target.files[0])}
-                        className="text-xs"
-                      />
-                      {lesson.video_url && <span className="text-green-600 text-xs">✓ Video</span>}
-                      <button onClick={() => removeLesson(modIdx, lessonIdx)} className="text-red-500 text-sm">✕</button>
-                    </div>
-                  </div>
+          }
+        />
 
-                  {/* --- NEW FIELDS: Summary, Tasks, Helpful Links --- */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-                    {/* Summary */}
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Summary</label>
-                      <textarea
-                        value={lesson.summary || ''}
-                        onChange={(e) => updateLesson(modIdx, lessonIdx, 'summary', e.target.value)}
-                        rows={3}
-                        className="w-full border rounded px-2 py-1 text-sm"
-                        placeholder="Brief summary of the lesson..."
-                      />
-                    </div>
+        {toast && <Toast msg={toast.msg} type={toast.type} onDismiss={() => setToast(null)} />}
 
-                    {/* Tasks (one per line) */}
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Tasks (one per line)</label>
-                      <textarea
-                        value={tasksToText(lesson.tasks)}
-                        onChange={(e) => updateLesson(modIdx, lessonIdx, 'tasks', tasksFromText(e.target.value))}
-                        rows={3}
-                        className="w-full border rounded px-2 py-1 text-sm font-mono"
-                        placeholder="Watch video&#10;Take notes&#10;Complete quiz"
-                      />
-                    </div>
+        {/* Course info */}
+        <Section title="Course Details">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <Field label="Title" required>
+              <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Professional Eyelash Extension Masterclass" />
+            </Field>
+            <Field label="Slug" required hint="Auto-generated from title">
+              <Input value={slug} onChange={e => setSlug(e.target.value)} placeholder="professional-eyelash-masterclass" />
+            </Field>
+            <Field label="Price (USD)" required>
+              <Input type="number" value={price} onChange={e => setPrice(e.target.value)} placeholder="297" />
+            </Field>
+            <Field label="Status">
+              <Select value={status} onChange={e => setStatus(e.target.value)}>
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Description" style={{ marginTop: 14 }}>
+            <Input value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="What will students learn?" />
+          </Field>
+        </Section>
 
-                    {/* Helpful Links (URL or Label|URL per line) */}
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Helpful Links (one per line, format: Label|URL or just URL)</label>
-                      <textarea
-                        value={linksToText(lesson.helpful_links)}
-                        onChange={(e) => updateLesson(modIdx, lessonIdx, 'helpful_links', linksFromText(e.target.value))}
-                        rows={2}
-                        className="w-full border rounded px-2 py-1 text-sm font-mono"
-                        placeholder="Documentation|https://example.com&#10;https://another.com"
-                      />
-                    </div>
-                  </div>
-
-                  {/* ─── Quiz section ────────────────────────── */}
-                  <div className="bg-brand-rose-50/50 rounded-lg p-3 border border-brand-rose-100 mt-2">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-sm font-medium">📝 Quiz</span>
-                      {lesson.quizzes && lesson.quizzes.length > 0 ? (
-                        <>
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Enabled</span>
-                          <button
-                            onClick={() => {
-                              const updated = [...modules];
-                              updated[modIdx].lessons[lessonIdx].quizzes = [];
-                              setModules(updated);
-                            }}
-                            className="text-xs text-red-500 hover:underline"
-                          >
-                            Remove Quiz
-                          </button>
-                        </>
-                      ) : (
-                        <button onClick={() => ensureQuiz(modIdx, lessonIdx)} className="text-xs text-brand-rose-600 hover:underline">
-                          + Add Quiz
-                        </button>
-                      )}
-                    </div>
-
-                    {lesson.quizzes && lesson.quizzes.map((quiz, quizIdx) => (
-                      <div key={quiz.id} className="space-y-3 ml-2">
-                        <div className="flex items-center gap-4">
-                          <label className="text-xs">Pass %</label>
-                          <input
-                            type="number"
-                            value={quiz.pass_percentage}
-                            onChange={(e) => updateQuiz(modIdx, lessonIdx, quizIdx, 'pass_percentage', parseInt(e.target.value) || 70)}
-                            className="w-16 border rounded px-2 py-0.5 text-xs"
-                            min="0"
-                            max="100"
-                          />
-                        </div>
-
-                        {/* Questions */}
-                        <div className="space-y-3">
-                          {quiz.quiz_questions.map((q, qIdx) => (
-                            <div key={q.id} className="bg-white rounded-lg p-3 border space-y-2">
-                              <div className="flex gap-2 items-center">
-                                <input
-                                  value={q.question_text}
-                                  onChange={(e) => updateQuestion(modIdx, lessonIdx, quizIdx, qIdx, 'question_text', e.target.value)}
-                                  className="flex-1 border rounded px-2 py-1 text-sm"
-                                  placeholder="Question"
-                                />
-                                <button onClick={() => removeQuestion(modIdx, lessonIdx, quizIdx, qIdx)} className="text-red-500 text-xs">✕</button>
-                              </div>
-                              {q.options.map((opt, optIdx) => (
-                                <div key={optIdx} className="flex items-center gap-2">
-                                  <input
-                                    type="radio"
-                                    name={`q_${q.id}_correct`}
-                                    checked={q.correct_option_index === optIdx}
-                                    onChange={() => updateQuestion(modIdx, lessonIdx, quizIdx, qIdx, 'correct_option_index', optIdx)}
-                                    className="accent-brand-rose-600"
-                                  />
-                                  <input
-                                    value={opt}
-                                    onChange={(e) => {
-                                      const newOptions = [...q.options];
-                                      newOptions[optIdx] = e.target.value;
-                                      updateQuestion(modIdx, lessonIdx, quizIdx, qIdx, 'options', newOptions);
-                                    }}
-                                    className="flex-1 border rounded px-2 py-0.5 text-xs"
-                                    placeholder={`Option ${optIdx + 1}`}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                          <button onClick={() => addQuestion(modIdx, lessonIdx, quizIdx)} className="text-xs text-brand-rose-600 hover:underline">
-                            + Add Question
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+        {/* Modules */}
+        <div>
+          {modules.map((mod, mi) => (
+            <Section key={mod.id} collapsible defaultOpen={mi === 0}
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+                  <input value={mod.title} onChange={e => { e.stopPropagation(); updateModule(mi, 'title', e.target.value); }} onClick={e => e.stopPropagation()}
+                    style={{ flex: 1, fontFamily: A.fontDisplay, fontSize: 18, fontWeight: 600, background: 'transparent', border: 'none', outline: 'none', color: A.textPrimary }} />
+                  <span style={{ fontFamily: A.fontBody, fontSize: 12, color: A.textMuted }}>{mod.lessons.length} lessons</span>
+                  <button onClick={e => { e.stopPropagation(); if (window.confirm('Delete this module and all its lessons?')) removeModule(mi); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: A.red, fontSize: 16, lineHeight: 1 }}>×</button>
                 </div>
+              }
+            >
+              {(mod.lessons || []).map((lesson, li) => (
+                <LessonEditor key={lesson.id} lesson={lesson} lessonIdx={li} modIdx={mi}
+                  onUpdate={(f, v) => updateLesson(mi, li, f, v)}
+                  onRemove={() => removeLesson(mi, li)}
+                  onVideoUpload={(file) => handleVideoUpload(mi, li, file)}
+                  uploading={uploading[`${mi}_${li}`]}
+                />
               ))}
-            </div>
-          </GlassCard>
-        ))}
-      </div>
+              <div style={{ marginTop: 10 }}>
+                <Btn variant="ghost" size="sm" onClick={() => addLesson(mi)}>+ Add Lesson</Btn>
+              </div>
+            </Section>
+          ))}
+        </div>
 
-      <div className="flex justify-between mt-6">
-        <button onClick={addModule} className="btn-ghost">+ Add Module</button>
-        <PrimaryButton onClick={handleSaveAll} loading={saving}>
-          Save Course
-        </PrimaryButton>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingBottom: 32 }}>
+          <Btn variant="ghost" onClick={addModule}>+ Add Module</Btn>
+          <Btn variant="primary" onClick={handleSaveAll} loading={saving} size="lg">
+            {saving ? 'Saving…' : '✓ Save All Changes'}
+          </Btn>
+        </div>
       </div>
     </AdminLayout>
   );

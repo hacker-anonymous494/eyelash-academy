@@ -1,291 +1,231 @@
 import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { supabase } from '@/config/supabase';
 import AdminLayout from './AdminLayout';
-import GlassCard from '@/shared/components/GlassCard';
-import {
-  ResponsiveContainer,
-  LineChart, Line,
-  BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  PieChart, Pie, Cell
-} from 'recharts';
+import { A, Card, Spinner, Skeleton, Btn, PageHeader, exportCSV } from './adminShared.jsx';
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
-const COLORS = ['#c84070', '#f0a0b8', '#e87090', '#d4a030', '#3498db', '#2ecc71'];
+const CHART_COLORS = ['#c84070', '#e87090', '#f0a0b8', '#d4a030', '#3498db', '#2ecc71', '#9b59b6'];
 
-function exportCSV(rows, filename) {
-  if (!rows.length) return;
-  const headers = Object.keys(rows[0]);
-  const csv = [
-    headers.join(','),
-    ...rows.map(row => headers.map(h => `"${String(row[h] || '').replace(/"/g, '""')}"`).join(','))
-  ].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+const tooltipStyle = {
+  background: 'white', border: `1px solid rgba(200,64,112,0.15)`,
+  borderRadius: 10, fontSize: 12, fontFamily: "'DM Sans',system-ui,sans-serif",
+  boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+};
 
-// ─── Main Page ────────────────────────────────────────────────────────────
 export default function AdminAnalyticsPage() {
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState('daily');
   const [revenueData, setRevenueData] = useState([]);
   const [enrollmentData, setEnrollmentData] = useState([]);
   const [coursePopularity, setCoursePopularity] = useState([]);
   const [completionRates, setCompletionRates] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
-  const [period, setPeriod] = useState('daily'); // daily | weekly | monthly
+  const [summary, setSummary] = useState({ totalRevenue: 0, totalStudents: 0, totalCerts: 0, avgCompletion: 0 });
 
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
-      // 1. Orders with course title
-      const { data: orders } = await supabase
-        .from('orders')
-        .select('*, courses(title), profiles(full_name)')
-        .eq('status', 'completed')
-        .order('created_at', { ascending: false });
-      
-      const allOrders = orders || [];
-      setRecentOrders(allOrders.slice(0, 10));
-
-      // 2. Revenue over time
-      const revenueMap = new Map();
-      allOrders.forEach(order => {
-        const date = new Date(order.created_at);
-        let key;
-        if (period === 'daily') {
-          key = date.toISOString().slice(0, 10); // YYYY-MM-DD
-        } else if (period === 'weekly') {
-          const startOfWeek = new Date(date);
-          startOfWeek.setDate(date.getDate() - date.getDay());
-          key = startOfWeek.toISOString().slice(0, 10);
-        } else {
-          key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,'0')}`;
-        }
-        const current = revenueMap.get(key) || 0;
-        revenueMap.set(key, current + (order.amount_cents / 100));
-      });
-      const revenueArr = Array.from(revenueMap, ([date, amount]) => ({ date, revenue: Math.round(amount * 100) / 100 }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-      setRevenueData(revenueArr);
-
-      // 3. Enrollment trends (enrollments over time)
-      const { data: enrollments } = await supabase
-        .from('enrollments')
-        .select('*, courses(title)')
-        .order('purchased_at', { ascending: false });
-      const enrollMap = new Map();
-      (enrollments || []).forEach(enr => {
-        const date = new Date(enr.purchased_at);
-        let key;
-        if (period === 'daily') key = date.toISOString().slice(0, 10);
-        else if (period === 'weekly') {
-          const sow = new Date(date);
-          sow.setDate(date.getDate() - date.getDay());
-          key = sow.toISOString().slice(0, 10);
-        } else key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2,'0')}`;
-        const current = enrollMap.get(key) || 0;
-        enrollMap.set(key, current + 1);
-      });
-      const enrollArr = Array.from(enrollMap, ([date, count]) => ({ date, students: count }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-      setEnrollmentData(enrollArr);
-
-      // 4. Course popularity (by revenue)
-      const courseMap = new Map();
-      allOrders.forEach(order => {
-        const name = order.courses?.title || 'Unknown';
-        const current = courseMap.get(name) || 0;
-        courseMap.set(name, current + (order.amount_cents / 100));
-      });
-      const popArr = Array.from(courseMap, ([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 8);
-      setCoursePopularity(popArr);
-
-      // 5. Completion rates (certificates issued vs total students per course)
+      const { data: orders } = await supabase.from('orders').select('*, courses(title), profiles(full_name)').eq('status', 'completed').order('created_at', { ascending: false });
+      const { data: enrollments } = await supabase.from('enrollments').select('*, courses(title)').order('purchased_at', { ascending: false });
       const { data: courses } = await supabase.from('courses').select('id, title');
       const { data: certs } = await supabase.from('certificates').select('course_id');
       const { data: allEnrollments } = await supabase.from('enrollments').select('course_id');
-      const completion = (courses || []).map(course => {
-        const totalEnrolled = (allEnrollments || []).filter(e => e.course_id === course.id).length;
-        const totalCerts = (certs || []).filter(c => c.course_id === course.id).length;
-        return {
-          name: course.title,
-          enrolled: totalEnrolled,
-          certified: totalCerts,
-          rate: totalEnrolled > 0 ? Math.round((totalCerts / totalEnrolled) * 100) : 0,
-        };
+
+      const allOrders = orders || [];
+      setRecentOrders(allOrders.slice(0, 10));
+      setSummary({
+        totalRevenue: allOrders.reduce((s, o) => s + o.amount_cents, 0) / 100,
+        totalStudents: [...new Set(allOrders.map(o => o.student_id))].length,
+        totalCerts: certs?.length || 0,
+        avgCompletion: allEnrollments?.length > 0 ? Math.round(((certs?.length || 0) / allEnrollments.length) * 100) : 0,
       });
-      setCompletionRates(completion);
+
+      // Revenue over time
+      const revMap = new Map();
+      allOrders.forEach(o => {
+        const d = new Date(o.created_at);
+        let key = period === 'daily' ? d.toISOString().slice(0, 10) : period === 'weekly' ? (() => { const s = new Date(d); s.setDate(d.getDate() - d.getDay()); return s.toISOString().slice(0, 10); })() : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        revMap.set(key, (revMap.get(key) || 0) + o.amount_cents / 100);
+      });
+      setRevenueData([...revMap].map(([date, revenue]) => ({ date, revenue: Math.round(revenue * 100) / 100 })).sort((a, b) => a.date.localeCompare(b.date)).slice(-30));
+
+      // Enrollment trend
+      const enrMap = new Map();
+      (enrollments || []).forEach(e => {
+        const d = new Date(e.purchased_at);
+        let key = period === 'daily' ? d.toISOString().slice(0, 10) : period === 'weekly' ? (() => { const s = new Date(d); s.setDate(d.getDate() - d.getDay()); return s.toISOString().slice(0, 10); })() : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        enrMap.set(key, (enrMap.get(key) || 0) + 1);
+      });
+      setEnrollmentData([...enrMap].map(([date, students]) => ({ date, students })).sort((a, b) => a.date.localeCompare(b.date)).slice(-30));
+
+      // Course revenue share
+      const cMap = new Map();
+      allOrders.forEach(o => { const n = o.courses?.title || 'Unknown'; cMap.set(n, (cMap.get(n) || 0) + o.amount_cents / 100); });
+      setCoursePopularity([...cMap].map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 })).sort((a, b) => b.value - a.value).slice(0, 6));
+
+      // Completion rates
+      setCompletionRates((courses || []).map(c => {
+        const enrolled = (allEnrollments || []).filter(e => e.course_id === c.id).length;
+        const certified = (certs || []).filter(cert => cert.course_id === c.id).length;
+        return { name: c.title, enrolled, certified, rate: enrolled > 0 ? Math.round((certified / enrolled) * 100) : 0 };
+      }).sort((a, b) => b.enrolled - a.enrolled));
 
       setLoading(false);
     }
     fetchAll();
   }, [period]);
 
+  const summaryCards = [
+    { label: 'Total Revenue', value: `$${summary.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 0 })}`, icon: '💰', color: A.rose },
+    { label: 'Paying Students', value: summary.totalStudents, icon: '👩‍🎓', color: A.blue },
+    { label: 'Certificates Issued', value: summary.totalCerts, icon: '🏅', color: A.gold },
+    { label: 'Avg. Completion', value: `${summary.avgCompletion}%`, icon: '✅', color: A.green },
+  ];
+
   return (
     <AdminLayout>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h2 className="text-3xl font-display font-semibold">Advanced Analytics</h2>
-          <div className="flex gap-2">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <PageHeader title="Analytics" subtitle="Revenue, enrollment, and student performance data" />
+          <div style={{ display: 'flex', gap: 8 }}>
             {['daily', 'weekly', 'monthly'].map(p => (
-              <button
-                key={p}
-                onClick={() => setPeriod(p)}
-                className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${
-                  period === p
-                    ? 'bg-brand-rose-600 text-white shadow'
-                    : 'bg-white/60 text-gray-500 border border-brand-rose-200/40 hover:bg-brand-rose-50'
-                }`}
-              >
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </button>
+              <button key={p} onClick={() => setPeriod(p)} style={{
+                fontFamily: A.fontBody, fontSize: 12, fontWeight: 500, textTransform: 'capitalize',
+                background: period === p ? A.roseGrad : 'white',
+                color: period === p ? 'white' : A.textMuted,
+                border: period === p ? 'none' : `1px solid ${A.cardBorder}`,
+                borderRadius: 100, padding: '7px 16px', cursor: 'pointer',
+                boxShadow: period === p ? '0 2px 8px rgba(200,64,112,0.28)' : 'none',
+              }}>{p}</button>
             ))}
           </div>
         </div>
 
-        {loading ? (
-          <div className="flex justify-center py-20">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-brand-rose-200 border-t-brand-rose-600" />
+        {/* Summary cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 14 }}>
+          {summaryCards.map((s, i) => (
+            <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}>
+              <Card style={{ padding: '18px 20px' }}>
+                <div style={{ fontSize: 24, marginBottom: 10 }}>{s.icon}</div>
+                {loading ? <Skeleton height={28} style={{ marginBottom: 4 }} /> : (
+                  <p style={{ fontFamily: A.fontDisplay, fontSize: 28, fontWeight: 600, color: s.color, margin: '0 0 4px', lineHeight: 1 }}>{s.value}</p>
+                )}
+                <p style={{ fontFamily: A.fontBody, fontSize: 11.5, color: A.textMuted, margin: 0 }}>{s.label}</p>
+              </Card>
+            </motion.div>
+          ))}
+        </div>
+
+        {/* Revenue trend */}
+        <Card style={{ padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <h3 style={{ fontFamily: A.fontDisplay, fontSize: 20, fontWeight: 600, color: A.textPrimary, margin: 0 }}>Revenue Trend</h3>
+            <Btn variant="ghost" size="sm" onClick={() => exportCSV(revenueData, `revenue_${period}.csv`)}>↓ CSV</Btn>
           </div>
-        ) : (
-          <>
-            {/* Revenue Trend */}
-            <GlassCard className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-display font-semibold text-xl">Revenue Trend</h3>
-                <button onClick={() => exportCSV(revenueData, `revenue_${period}.csv`)}
-                  className="text-xs text-brand-rose-600 hover:underline">Export CSV</button>
-              </div>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={revenueData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0e0e0" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="revenue" stroke="#c84070" strokeWidth={2} dot={false} name="Revenue ($)" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </GlassCard>
+          {loading ? <Skeleton height={260} /> : (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={revenueData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={A.cardBorder} />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fontFamily: A.fontBody }} stroke={A.cardBorder} />
+                <YAxis tick={{ fontSize: 11, fontFamily: A.fontBody }} stroke={A.cardBorder} />
+                <Tooltip contentStyle={tooltipStyle} formatter={v => [`$${v}`, 'Revenue']} />
+                <Line type="monotone" dataKey="revenue" stroke={A.rose} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
 
-            {/* Enrollment Trend */}
-            <GlassCard className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-display font-semibold text-xl">Student Enrollment Trend</h3>
-                <button onClick={() => exportCSV(enrollmentData, `enrollments_${period}.csv`)}
-                  className="text-xs text-brand-rose-600 hover:underline">Export CSV</button>
-              </div>
-              <div className="h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={enrollmentData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0e0e0" />
-                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="students" fill="#e87090" radius={[4, 4, 0, 0]} name="New Enrollments" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </GlassCard>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Course Popularity */}
-              <GlassCard className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="font-display font-semibold text-xl">Course Revenue Share</h3>
-                  <button onClick={() => exportCSV(coursePopularity, 'course_popularity.csv')}
-                    className="text-xs text-brand-rose-600 hover:underline">Export CSV</button>
-                </div>
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={coursePopularity}
-                        cx="50%" cy="50%"
-                        outerRadius={90}
-                        dataKey="value"
-                        nameKey="name"
-                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                        labelLine={false}
-                      >
-                        {coursePopularity.map((_, idx) => (
-                          <Cell key={`cell-${idx}`} fill={COLORS[idx % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(val) => `$${val}`} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </GlassCard>
-
-              {/* Completion Rates */}
-              <GlassCard className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="font-display font-semibold text-xl">Completion Rates</h3>
-                  <button onClick={() => exportCSV(completionRates, 'completion_rates.csv')}
-                    className="text-xs text-brand-rose-600 hover:underline">Export CSV</button>
-                </div>
-                <div className="space-y-3 max-h-72 overflow-y-auto">
-                  {completionRates.map((c) => (
-                    <div key={c.name}>
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="truncate mr-2">{c.name}</span>
-                        <span className="text-gray-500">{c.certified}/{c.enrolled} ({c.rate}%)</span>
-                      </div>
-                      <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-brand-rose-500 to-brand-rose-300 rounded-full"
-                          style={{ width: `${c.rate}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </GlassCard>
+        {/* Enrollment + pie */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 20 }}>
+          <Card style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <h3 style={{ fontFamily: A.fontDisplay, fontSize: 20, fontWeight: 600, color: A.textPrimary, margin: 0 }}>New Enrollments</h3>
+              <Btn variant="ghost" size="sm" onClick={() => exportCSV(enrollmentData, `enrollments_${period}.csv`)}>↓ CSV</Btn>
             </div>
+            {loading ? <Skeleton height={220} /> : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={enrollmentData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={A.cardBorder} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={A.cardBorder} />
+                  <YAxis tick={{ fontSize: 11 }} stroke={A.cardBorder} />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Bar dataKey="students" fill={A.rose} radius={[4, 4, 0, 0]} name="Enrollments" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
 
-            {/* Recent Orders Table */}
-            <GlassCard className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-display font-semibold text-xl">Recent Orders</h3>
-                <button onClick={() => exportCSV(recentOrders, 'recent_orders.csv')}
-                  className="text-xs text-brand-rose-600 hover:underline">Export CSV</button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-gray-500 border-b border-brand-rose-100">
-                      <th className="pb-2">Student</th>
-                      <th className="pb-2">Course</th>
-                      <th className="pb-2">Amount</th>
-                      <th className="pb-2">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentOrders.map(order => (
-                      <tr key={order.id} className="border-b border-brand-rose-50">
-                        <td className="py-2">{order.profiles?.full_name || '—'}</td>
-                        <td className="py-2">{order.courses?.title || '—'}</td>
-                        <td className="py-2 font-semibold">${(order.amount_cents / 100).toFixed(2)}</td>
-                        <td className="py-2 text-gray-500">{new Date(order.created_at).toLocaleDateString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </GlassCard>
-          </>
-        )}
+          <Card style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <h3 style={{ fontFamily: A.fontDisplay, fontSize: 20, fontWeight: 600, color: A.textPrimary, margin: 0 }}>Revenue by Course</h3>
+              <Btn variant="ghost" size="sm" onClick={() => exportCSV(coursePopularity, 'course_revenue.csv')}>↓ CSV</Btn>
+            </div>
+            {loading ? <Skeleton height={220} /> : (
+              <ResponsiveContainer width="100%" height={220}>
+                <PieChart>
+                  <Pie data={coursePopularity} cx="50%" cy="50%" outerRadius={80} dataKey="value" nameKey="name">
+                    {coursePopularity.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} formatter={v => [`$${v}`, 'Revenue']} />
+                  <Legend wrapperStyle={{ fontFamily: A.fontBody, fontSize: 11 }} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </div>
+
+        {/* Completion rates */}
+        <Card style={{ padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <h3 style={{ fontFamily: A.fontDisplay, fontSize: 20, fontWeight: 600, color: A.textPrimary, margin: 0 }}>Course Completion Rates</h3>
+            <Btn variant="ghost" size="sm" onClick={() => exportCSV(completionRates, 'completion.csv')}>↓ CSV</Btn>
+          </div>
+          {loading ? <Skeleton height={200} /> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {completionRates.map((c, i) => (
+                <div key={i}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                    <span style={{ fontFamily: A.fontBody, fontSize: 13, color: A.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '60%' }}>{c.name}</span>
+                    <span style={{ fontFamily: A.fontBody, fontSize: 12, color: A.textMuted, flexShrink: 0 }}>{c.certified}/{c.enrolled} · {c.rate}%</span>
+                  </div>
+                  <div style={{ height: 6, background: A.cardBorder, borderRadius: 3, overflow: 'hidden' }}>
+                    <motion.div initial={{ width: 0 }} animate={{ width: `${c.rate}%` }} transition={{ duration: 0.8, delay: i * 0.05 }}
+                      style={{ height: '100%', borderRadius: 3, background: c.rate > 70 ? 'linear-gradient(90deg,#2ecc71,#27ae60)' : c.rate > 40 ? `linear-gradient(90deg,${A.rose},#f07090)` : 'linear-gradient(90deg,#e74c3c,#c0392b)' }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        {/* Recent orders table */}
+        <Card style={{ padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <h3 style={{ fontFamily: A.fontDisplay, fontSize: 20, fontWeight: 600, color: A.textPrimary, margin: 0 }}>Recent Orders</h3>
+            <Btn variant="ghost" size="sm" onClick={() => exportCSV(recentOrders.map(o => ({ student: o.profiles?.full_name, course: o.courses?.title, amount: o.amount_cents / 100, date: o.created_at })), 'recent_orders.csv')}>↓ Export</Btn>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: A.fontBody, fontSize: 13 }}>
+              <thead>
+                <tr>{['Student', 'Course', 'Amount', 'Date'].map((h, i) => <th key={i} style={{ padding: '10px 14px', textAlign: 'left', fontFamily: A.fontBody, fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: A.textMuted, borderBottom: `1px solid ${A.cardBorder}` }}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {loading ? [...Array(5)].map((_, i) => <tr key={i}>{[...Array(4)].map((_, j) => <td key={j} style={{ padding: '12px 14px' }}><Skeleton height={14} /></td>)}</tr>) :
+                recentOrders.map((o, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${A.cardBorder}` }}
+                    onMouseEnter={e => e.currentTarget.style.background = A.roseBg}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <td style={{ padding: '12px 14px', fontWeight: 500 }}>{o.profiles?.full_name || '—'}</td>
+                    <td style={{ padding: '12px 14px', color: A.textMuted, maxWidth: 200 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.courses?.title || '—'}</span></td>
+                    <td style={{ padding: '12px 14px', fontWeight: 700, color: A.rose }}>${(o.amount_cents / 100).toFixed(2)}</td>
+                    <td style={{ padding: '12px 14px', color: A.textMuted, fontSize: 12 }}>{new Date(o.created_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       </div>
     </AdminLayout>
   );
