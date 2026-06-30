@@ -5,7 +5,6 @@ import { useAuth } from '@/features/auth/hooks/useAuth';
 import { requestNotificationPermission } from '@/lib/notifications';
 import { S, PageShell } from '@/features/dashboard/student/dashboardShared';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
 function timeToMinutes(t) {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
@@ -32,7 +31,6 @@ export default function BookCallPage() {
   const [error, setError] = useState('');
   const [bookedTime, setBookedTime] = useState(null);
 
-  // ── Fetch settings and existing sessions ────────────────────────────────
   useEffect(() => {
     async function fetchData() {
       const { data: settingsData } = await supabase.from('admin_settings').select('*').single();
@@ -50,12 +48,11 @@ export default function BookCallPage() {
     fetchData();
   }, []);
 
-  // ── Compute available time slots for the chosen date ────────────────────
   const getAvailableSlots = () => {
     if (!settings || !selectedDate) return [];
 
     const dateObj = new Date(selectedDate + 'T00:00:00');
-    const dayOfWeek = dateObj.getDay(); // 0=Sun
+    const dayOfWeek = dateObj.getDay();
 
     if (!settings.available_days.includes(dayOfWeek)) return [];
 
@@ -63,7 +60,6 @@ export default function BookCallPage() {
     const toMin = timeToMinutes(settings.available_to);
     const duration = settings.slot_duration_minutes;
 
-    // Collect busy intervals
     const busyIntervals = existingSessions.map(s => {
       const start = new Date(s.scheduled_at);
       const end = new Date(start.getTime() + (s.duration_minutes || 60) * 60000);
@@ -75,7 +71,6 @@ export default function BookCallPage() {
       const slotStart = new Date(`${selectedDate}T${minutesToTime(start)}:00`);
       const slotEnd = new Date(slotStart.getTime() + duration * 60000);
 
-      // Check overlap with any busy interval
       const overlaps = busyIntervals.some(
         iv => slotStart < iv.end && slotEnd > iv.start
       );
@@ -89,7 +84,6 @@ export default function BookCallPage() {
 
   const availableSlots = getAvailableSlots();
 
-  // ── Handle booking ─────────────────────────────────────────────────────
   const handleBook = async () => {
     if (!selectedDate || !selectedTime) {
       setError('Please select a date and time.');
@@ -98,29 +92,51 @@ export default function BookCallPage() {
     setBooking(true);
     setError('');
 
-    // Request notification permission
     if ('Notification' in window && Notification.permission === 'default') {
       await requestNotificationPermission();
     }
 
     const scheduledAt = new Date(`${selectedDate}T${selectedTime}:00`).toISOString();
-    const { error: insertErr } = await supabase.from('video_call_sessions').insert({
-      student_id: user.id,
-      scheduled_at: scheduledAt,
-      status: 'scheduled',
-      duration_minutes: settings.slot_duration_minutes || 60,
-    });
+
+    // Insert and get the new session's ID
+    const { data: newSession, error: insertErr } = await supabase
+      .from('video_call_sessions')
+      .insert({
+        student_id: user.id,
+        scheduled_at: scheduledAt,
+        status: 'scheduled',
+        duration_minutes: settings.slot_duration_minutes || 60,
+      })
+      .select('id')
+      .single();
 
     if (insertErr) {
       setError('Failed to book: ' + insertErr.message);
-    } else {
-      setBookedTime(new Date(scheduledAt));
-      setSuccess(true);
+      setBooking(false);
+      return;
     }
+
+    // Call Netlify function to send email notification
+    try {
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      await fetch('/.netlify/functions/notify-call-booking', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authSession.access_token}`,
+        },
+        body: JSON.stringify({ sessionId: newSession.id }),
+      });
+    } catch (e) {
+      // email notification failure is non-critical
+      console.warn('Failed to trigger booking email:', e);
+    }
+
+    setBookedTime(new Date(scheduledAt));
+    setSuccess(true);
     setBooking(false);
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────
   if (success) {
     return (
       <PageShell maxWidth={560}>
@@ -166,7 +182,6 @@ export default function BookCallPage() {
           </div>
         ) : (
           <div className="space-y-5">
-            {/* Date picker */}
             <div>
               <label className="block text-sm font-medium mb-1">Date</label>
               <input
@@ -178,7 +193,6 @@ export default function BookCallPage() {
               />
             </div>
 
-            {/* Time slots */}
             {selectedDate && (
               <div>
                 <label className="block text-sm font-medium mb-1">Available Times</label>
@@ -208,7 +222,6 @@ export default function BookCallPage() {
               </div>
             )}
 
-            {/* Note */}
             <div>
               <label className="block text-sm font-medium mb-1">What do you want to cover? (optional)</label>
               <textarea

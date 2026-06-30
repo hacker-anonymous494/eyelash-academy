@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const { sendEmail, templates } = require('./email');   // ← added
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -60,7 +61,7 @@ exports.handler = async (event) => {
     // 3. Get user and course details
     const { data: profile } = await supabase
       .from('profiles')
-      .select('full_name')
+      .select('full_name, email')   // added email
       .eq('id', user.id)
       .single();
 
@@ -77,18 +78,15 @@ exports.handler = async (event) => {
     });
     const verifyUrl = `${SITE_URL}/verify/${certCode}`;
 
-    // Create PDF
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([792, 612]); // Letter landscape: 11in x 8.5in => 792x612 points
-    const width = page.getWidth();   // 792
-    const height = page.getHeight(); // 612
+    const page = pdfDoc.addPage([792, 612]);
+    const width = page.getWidth();
+    const height = page.getHeight();
 
-    // Embed fonts
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const monoFont = await pdfDoc.embedFont(StandardFonts.Courier);
 
-    // Colors
     const borderColor = rgb(200/255, 64/255, 112/255);
     const lightBorderColor = rgb(232/255, 112/255, 144/255);
     const titleColor = rgb(200/255, 64/255, 112/255);
@@ -96,103 +94,45 @@ exports.handler = async (event) => {
     const textLight = rgb(85/255, 85/255, 85/255);
     const textCode = rgb(153/255, 153/255, 153/255);
 
-    // Borders – all coordinates are numbers now
     page.drawRectangle({
-      x: 20,
-      y: 20,
-      width: width - 40,
-      height: height - 40,
-      borderColor: borderColor,
-      borderWidth: 2,
+      x: 20, y: 20, width: width - 40, height: height - 40,
+      borderColor: borderColor, borderWidth: 2,
     });
     page.drawRectangle({
-      x: 25,
-      y: 25,
-      width: width - 50,
-      height: height - 50,
-      borderColor: lightBorderColor,
-      borderWidth: 1,
+      x: 25, y: 25, width: width - 50, height: height - 50,
+      borderColor: lightBorderColor, borderWidth: 1,
     });
 
-    // Title
     page.drawText('Certificate of Completion', {
-      x: width / 2,
-      y: height - 100,
-      size: 40,
-      font: boldFont,
-      color: titleColor,
-      textAlign: 'center',
+      x: width / 2, y: height - 100, size: 40, font: boldFont, color: titleColor, textAlign: 'center',
     });
 
-    // Student name
     page.drawText(profile.full_name, {
-      x: width / 2,
-      y: height - 180,
-      size: 28,
-      font: normalFont,
-      color: textDark,
-      textAlign: 'center',
+      x: width / 2, y: height - 180, size: 28, font: normalFont, color: textDark, textAlign: 'center',
     });
 
-    // Subtitle
     page.drawText('has successfully completed the', {
-      x: width / 2,
-      y: height - 220,
-      size: 16,
-      font: normalFont,
-      color: textLight,
-      textAlign: 'center',
+      x: width / 2, y: height - 220, size: 16, font: normalFont, color: textLight, textAlign: 'center',
     });
 
-    // Course title
     page.drawText(course.title, {
-      x: width / 2,
-      y: height - 270,
-      size: 24,
-      font: boldFont,
-      color: titleColor,
-      textAlign: 'center',
+      x: width / 2, y: height - 270, size: 24, font: boldFont, color: titleColor, textAlign: 'center',
     });
 
-    // Date
     page.drawText(`Issued on ${today}`, {
-      x: width / 2,
-      y: height - 320,
-      size: 14,
-      font: normalFont,
-      color: textLight,
-      textAlign: 'center',
+      x: width / 2, y: height - 320, size: 14, font: normalFont, color: textLight, textAlign: 'center',
     });
 
-    // Certificate code
     page.drawText(`Certificate Code: ${certCode}`, {
-      x: width / 2,
-      y: height - 380,
-      size: 10,
-      font: monoFont,
-      color: textCode,
-      textAlign: 'center',
+      x: width / 2, y: height - 380, size: 10, font: monoFont, color: textCode, textAlign: 'center',
     });
 
-    // Verification link
     page.drawText(`Verify online: ${verifyUrl}`, {
-      x: width / 2,
-      y: height - 410,
-      size: 9,
-      font: monoFont,
-      color: textLight,
-      textAlign: 'center',
-      underline: true,
+      x: width / 2, y: height - 410, size: 9, font: monoFont, color: textLight, textAlign: 'center', underline: true,
     });
 
-    // Footer
     page.drawText('Lumière Beauty Academy', {
-      x: width / 2,
-      y: 80,
-      size: 12,
-      font: boldFont,
-      color: titleColor,
-      textAlign: 'center',
+      x: width / 2, y: 80, size: 12, font: boldFont, color: titleColor, textAlign: 'center',
     });
 
     const pdfBuffer = await pdfDoc.save();
@@ -221,6 +161,23 @@ exports.handler = async (event) => {
         certificate_code: certCode,
       });
     if (insertError) throw new Error('Failed to save certificate: ' + insertError.message);
+
+    // ── Send certificate email ───────────────────────────────────────────
+    try {
+      if (profile.email) {
+        await sendEmail({
+          to: profile.email,
+          subject: `Your Certificate is Ready – ${course.title}`,
+          html: templates.certificateReady(
+            profile.full_name || 'Student',
+            course.title,
+            publicUrl
+          ),
+        });
+      }
+    } catch (mailErr) {
+      console.error('Failed to send certificate email:', mailErr);
+    }
 
     return {
       statusCode: 200,

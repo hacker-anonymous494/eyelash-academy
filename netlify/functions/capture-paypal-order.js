@@ -1,5 +1,5 @@
-// Native fetch available in Node 18+ (no require needed)
 const { createClient } = require('@supabase/supabase-js');
+const { sendEmail, templates } = require('./email');   // ← added
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -49,6 +49,13 @@ exports.handler = async (event) => {
 
     if (captureData.status !== 'COMPLETED') throw new Error('Payment not completed');
 
+    // Fetch course details for email
+    const { data: course } = await supabase
+      .from('courses')
+      .select('title')
+      .eq('id', courseId)
+      .single();
+
     // Create enrollment
     const { error: enrollError } = await supabase.from('enrollments').insert({
       student_id: user.id,
@@ -68,7 +75,30 @@ exports.handler = async (event) => {
         amount_cents: Math.round(parseFloat(amount.value) * 100),
         currency: amount.currency_code,
         status: 'completed',
-      }).catch(() => null); // Silently fail if table doesn't exist yet
+      }).catch(() => null);
+    }
+
+    // ── Send purchase receipt email ──────────────────────────────────────
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('id', user.id)
+        .single();
+
+      if (profile?.email && course) {
+        await sendEmail({
+          to: profile.email,
+          subject: `Enrollment Confirmed – ${course.title}`,
+          html: templates.purchaseReceipt(
+            profile.full_name || 'Student',
+            course.title,
+            amount ? Math.round(parseFloat(amount.value) * 100) : 0
+          ),
+        });
+      }
+    } catch (mailErr) {
+      console.error('Failed to send purchase email:', mailErr);
     }
 
     return { statusCode: 200, body: JSON.stringify({ success: true }) };
